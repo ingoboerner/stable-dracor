@@ -1,0 +1,27 @@
+services:
+  api:
+    image: ingoboerner/dracor-api:v0.86.3_local
+    ports:
+      - "8080:8080"
+    depends_on:
+      - metrics
+      - fuseki
+  metrics:
+    image: ingoboerner/dracor-metrics:v1.2.1
+    ports:
+      - "8030:8030"
+  frontend:
+    image: ingoboerner/dracor-frontend:v1.4.3_local
+    ports:
+      - "8088:80"
+    depends_on:
+      - api
+  fuseki:
+    image: "stain/jena-fuseki"
+    environment:
+      - ADMIN_PASSWORD=qwerty
+      - FUSEKI_DATASET_1=dracor
+    ports:
+      - "3030:3030"
+    expose:
+      - "3030"
