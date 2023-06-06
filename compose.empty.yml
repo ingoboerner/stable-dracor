@@ -1,0 +1,36 @@
+services:
+  
+  api:
+    image: "dracor/dracor-api:v0.90.1-dirty"
+    environment:
+      - DRACOR_API_BASE=http://localhost:8088/api
+    ports:
+      - "8080:8080"
+    depends_on:
+      - fuseki
+      - metrics
+
+  metrics:
+    image: "dracor/dracor-metrics:v1.2.0-dirty"
+    ports:
+      - "8030:8030"
+
+  frontend:
+    image: "dracor/dracor-frontend:v1.6.0-dirty"
+    environment:
+      DRACOR_API: http://api:8080/exist/restxq
+    ports:
+      - "8088:80"
+    depends_on:
+      - api
+  
+  fuseki:
+    image: "dracor/dracor-fuseki:v1.0.0-dirty"
+    environment:
+      - ADMIN_PASSWORD=qwerty
+    ports:
+      - "3030:3030"
+    expose:
+      - "3030"
+  
+  
