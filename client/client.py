@@ -1,3 +1,5 @@
+"""Client to manage a local Docker-based instance of DraCor"""
+
 import requests, json
 from requests.auth import HTTPBasicAuth
 import logging
@@ -166,7 +168,8 @@ def api_put(data,
             playname (str, optional): Identifier of play 'playname'.
             method (str, optional): API method, e.g. "tei", "cast", ...
             username (str, optional): Username of a user with write access. Defaults to "admin"
-            password (str, optional): Password. Defaults to empty string ""
+            password (str, optional): Password. Defaults to empty string
+            headers (dict, optional): HTTP headers to send with the request""
         """
     request_url = construct_request_url(api_base_url=api_base_url,
                                         corpusname=corpusname,
@@ -203,11 +206,63 @@ def api_put(data,
         return r.status_code
 
 
+def api_delete(
+        api_base_url: str = "https://dracor.org/api/",
+        corpusname: str = None,
+        playname: str = None,
+        method: str = None,
+        username: str = "admin",
+        password: str = "",
+        headers: dict = None):
+    """Set DELETE request to a DraCor API
+
+    Args:
+        api_base_url (str, optional): Base URL of the DraCor API.
+        corpusname (str, optional): Identifier of corpus 'corpusname'.
+        playname (str, optional): Identifier of play 'playname'.
+        method (str, optional): API method, e.g. "tei", "cast", ...
+        username (str, optional): Username of a user with write access. Defaults to "admin"
+        password (str, optional): Password. Defaults to empty string
+        headers (dict, optional): HTTP headers to send with the request""
+    """
+    request_url = construct_request_url(api_base_url=api_base_url,
+                                        corpusname=corpusname,
+                                        playname=playname,
+                                        method=method)
+
+    logging.debug(f"Will send DELETE request to: {request_url}")
+
+    if username is not None and password is not None:
+        logging.debug("Credentials are provided.")
+        credentials = HTTPBasicAuth(username, password)
+    else:
+        logging.debug("Credentials are not provided.")
+        credentials = None
+
+    if credentials and headers:
+        r = requests.delete(request_url, headers=headers, auth=credentials)
+        logging.debug(f"Executed DELETE request including headers and credentials. "
+                      f"Server returned status code: {str(r.status_code)}")
+        return r.status_code
+    elif credentials and not headers:
+        r = requests.delete(request_url, auth=credentials)
+        logging.debug(f"Executed DELETE request including credentials, but no headers. "
+                      f"Server returned status code: {str(r.status_code)}")
+        return r.status_code
+    else:
+        r = requests.delete(request_url)
+        logging.debug(f"Executed DELETE request (no headers, no credentials). "
+                      f"Server returned status code: {str(r.status_code)}")
+        return r.status_code
+
+
 class StableDraCor:
     """Stable Local DraCor instance
 
     Attributes:
         api_base_url (str): URL of the local DraCor API
+        name (str, optional): Name of the local DraCor instance
+        description (str, optional): Description of the local DraCor instance
     """
 
     # URLs of external DraCor APIs
@@ -223,16 +278,26 @@ class StableDraCor:
     __username = "admin"
     __password = ""
 
+    # Name of the local instance
+    name = None
+
+    # Description of the local instance
+    description = None
+
     def __init__(self,
                  api_base_url: str = None,
                  username: str = None,
-                 password: str = None):
+                 password: str = None,
+                 name: str = None,
+                 description: str = None):
         """
 
         Args:
              api_base_url (str, optional): URL of the local DraCor API. Default is set to http://localhost:8088/api/
              username (str, optional): Username of the local instance. Default is set to "admin"
              password (str, optional): Password of the admin user of the local instance. Default is set to ""
+             name (str, optional): Name of the local instance
+             description (str, optional): Description of the local instance
         """
         logging.debug("Initializing...")
 
@@ -247,6 +312,13 @@ class StableDraCor:
         if password is not None:
             logging.debug(f"Update password with: {api_base_url}")
             self.__password = password
+
+        if name is not None:
+            logging.debug(f"Set name of the instance to: {name}")
+            self.name = name
+
+        if description is not None:
+            logging.debug(f"Set description of the instance to: {description}")
 
         logging.debug("Initialized new instance of StableDraCor.")
 
@@ -276,6 +348,19 @@ class StableDraCor:
         """
         logging.debug(kwargs)
         return api_put(data, api_base_url=self.api_base_url, **kwargs)
+
+    def __api_delete(self, **kwargs):
+        """Send DELETE request to running local instance. Uses the function api_delete, but overrides api_base_url
+        with the URL of the local instance
+        """
+        logging.debug(kwargs)
+        return api_delete(api_base_url=self.api_base_url, **kwargs)
+
+    def load_info(self):
+        """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
+        This information could be appended as docker labels when committing a running container.
+        TODO: implement"""
+        raise Exception("Not implemented.")
 
     def add_corpus(self,
                    corpus_metadata: dict,
@@ -501,5 +586,40 @@ class StableDraCor:
             logging.info(f"Copied corpus {source_corpusname} from {source_api_url}. Did not run a check.")
             return True
 
+    def remove_corpus(self, corpusname: str = None):
+        """Remove a corpus from the local instance"""
+
+        assert corpusname, "Providing a corpusname is mandatory."
+
+        logging.debug(f"Removing corpus {corpusname}")
+
+        delete_status = self.__api_delete(corpusname=corpusname,
+                                          username=self.__username,
+                                          password=self.__password)
+        if delete_status == 200:
+            logging.info(f"Removed corpus {corpusname}")
+            return True
+        if delete_status == 404:
+            logging.warning(f"Could not remove corpus {corpusname}. No such corpus.")
+            return False
+        else:
+            logging.debug(f"Server returned status code: {str(delete_status)}.")
+            logging.info(f"Could not remove corpus {corpusname}.")
+            False
+
+    def remove_play_from_corpus(self):
+        """Remove a play from a corpus
+        TODO: implement"""
+        raise Exception("Not implemented.")
+
+    def add_plays_from_directory(self):
+        """Load local data and add it to a corpus
+        TODO: implement"""
+        raise Exception("Not implemented.")
+
+    def add_play_version_to_corpus(self):
+        """Add a play in a certain version defined by a git commit to a corpus.
+        TODO: implement"""
+        raise Exception("Not implememted.")
 
 
