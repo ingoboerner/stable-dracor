@@ -3,6 +3,7 @@
 import requests, json
 from requests.auth import HTTPBasicAuth
 import logging
+import uuid
 
 
 def construct_request_url(
@@ -278,6 +279,9 @@ class StableDraCor:
     __username = "admin"
     __password = ""
 
+    # unique id of the local instance
+    id = None
+
     # Name of the local instance
     name = None
 
@@ -299,7 +303,18 @@ class StableDraCor:
              name (str, optional): Name of the local instance
              description (str, optional): Description of the local instance
         """
-        logging.debug("Initializing...")
+
+        # Set a uuid
+        self.id = uuid.uuid4()
+        logging.debug(f"Generated ID: {self.id}.")
+
+        if name is not None:
+            logging.debug(f"Set name to: {name}")
+            self.name = name
+
+        if description is not None:
+            logging.debug(f"Set description to: {name}")
+            self.description = description
 
         if api_base_url is not None:
             logging.debug(f"Update api_base_url with: {api_base_url}")
@@ -313,14 +328,12 @@ class StableDraCor:
             logging.debug(f"Update password with: {api_base_url}")
             self.__password = password
 
-        if name is not None:
-            logging.debug(f"Set name of the instance to: {name}")
-            self.name = name
+        logging.info(f"Initialized new StableDraCor instance: '{self.name}' (ID: {self.id}).")
 
-        if description is not None:
-            logging.debug(f"Set description of the instance to: {description}")
-
-        logging.debug("Initialized new instance of StableDraCor.")
+        if self.__test_api_connection() is True:
+            logging.info(f"Local DraCor API is available at {self.api_base_url}.")
+        else:
+            logging.warning(f"Local DraCor API is not available at {self.api_base_url}.")
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -355,6 +368,15 @@ class StableDraCor:
         """
         logging.debug(kwargs)
         return api_delete(api_base_url=self.api_base_url, **kwargs)
+
+    def __test_api_connection(self):
+        """Test if local DraCor API is available."""
+        try:
+            self.__api_get()
+            return True
+        except ConnectionError:
+            logging.debug("No API connection.")
+            return False
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
@@ -399,7 +421,11 @@ class StableDraCor:
 
                 errors = []
                 for field in corpus_metadata.keys():
-                    if local_corpus_meta[field] != corpus_metadata[field]:
+                    if field in local_corpus_meta:
+                        if local_corpus_meta[field] != corpus_metadata[field]:
+                            errors.append(field)
+                    else:
+                        logging.debug(f"Field {field} not in metadata of created corpus.")
                         errors.append(field)
                 logging.debug(f"Checked fields of metadata: {str(len(errors))} values did not match.")
                 if len(errors) == 0:
@@ -564,7 +590,7 @@ class StableDraCor:
                 if exclude is None:
                     expected_play_count = original_play_count
                 else:
-                    expected_play_count = original_play_count + len(exclude)
+                    expected_play_count = original_play_count - len(exclude)
                 logging.debug(f"Original play count: {str(original_play_count)}; "
                               f"Local play count: {str(local_play_count)}; "
                               f"Expected play count: {str(expected_play_count)}")
@@ -597,7 +623,7 @@ class StableDraCor:
                                           username=self.__username,
                                           password=self.__password)
         if delete_status == 200:
-            logging.info(f"Removed corpus {corpusname}")
+            logging.info(f"Removed corpus {corpusname}.")
             return True
         if delete_status == 404:
             logging.warning(f"Could not remove corpus {corpusname}. No such corpus.")
@@ -607,10 +633,28 @@ class StableDraCor:
             logging.info(f"Could not remove corpus {corpusname}.")
             False
 
-    def remove_play_from_corpus(self):
+    def remove_play_from_corpus(self,
+                                corpusname: str = None,
+                                playname: str = None):
         """Remove a play from a corpus
-        TODO: implement"""
-        raise Exception("Not implemented.")
+
+        Args:
+            corpusname (str): Identifier "corpusname" the play is contained in.
+            playname (str): Identifier "playname" of a play.
+        """
+        assert corpusname is not None, "Providing a corpusname is mandatory."
+        assert playname is not None, "Providing a playname is mandatory."
+
+        remove_status = self.__api_delete(corpusname=corpusname, playname=playname)
+        if remove_status == 200:
+            logging.info(f"Removed play {playname} from corpus {corpusname}.")
+            return True
+        if remove_status == 404:
+            logging.warning(f"No such play {playname} in {corpusname}.")
+            return False
+        else:
+            logging.debug(f"Unknown error code returned by delete operation: {str(remove_status)}")
+            return False
 
     def add_plays_from_directory(self):
         """Load local data and add it to a corpus
@@ -618,7 +662,7 @@ class StableDraCor:
         raise Exception("Not implemented.")
 
     def add_play_version_to_corpus(self):
-        """Add a play in a certain version defined by a git commit to a corpus.
+        """Add a play in a certain version from a git repository defined by a git commit to a corpus.
         TODO: implement"""
         raise Exception("Not implememted.")
 
