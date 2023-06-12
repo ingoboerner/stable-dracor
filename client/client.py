@@ -4,6 +4,10 @@ import requests, json
 from requests.auth import HTTPBasicAuth
 import logging
 import uuid
+import os
+from xml.etree.ElementTree import ParseError
+from xml.etree import ElementTree as ET
+
 
 
 def construct_request_url(
@@ -257,6 +261,18 @@ def api_delete(
         return r.status_code
 
 
+"""
+Some ideas that have not been implemented yet:
+
+- In parallel to corpora in the DB, the class should keep track of the status, e.g. information, if a play has been 
+removed, added, ... so that it is always possible to retrieve a manifest file of a given corpus.
+- store a corpus that has been compiled to a git repo, e.g. when adding plays from local, ... this is useful, when 
+there are changes necessary that can't be included in DraCor but want to be persisted.
+- change metadata of a corpus (there is no API function for this)
+- lookup function DraCor - ID to corpusname+playname and vice versa
+"""
+
+
 class StableDraCor:
     """Stable Local DraCor instance
 
@@ -383,6 +399,21 @@ class StableDraCor:
         This information could be appended as docker labels when committing a running container.
         TODO: implement"""
         raise Exception("Not implemented.")
+
+    def __corpus_exists(self, corpusname: str) -> bool:
+        """Helper function to check if a corpus exists.
+        The method checks if the provided identifier corpusname is in one of the fields "name" returned
+        by the /corpora endpoint
+        """
+        logging.debug(f"Invoked __corpus_exists. Checking for corpora with name '{corpusname}'.")
+        corpora = self.__api_get(method="corpora")
+        result = list(filter(lambda corpus: corpusname in corpus["name"], corpora))
+        if len(result) == 1:
+            logging.debug(f"Corpus '{corpusname}' exists.")
+            return True
+        else:
+            logging.debug(f"Corpus '{corpusname}' does not exist.")
+            return False
 
     def add_corpus(self,
                    corpus_metadata: dict,
@@ -641,6 +672,7 @@ class StableDraCor:
         Args:
             corpusname (str): Identifier "corpusname" the play is contained in.
             playname (str): Identifier "playname" of a play.
+            TODO: could add check to see if play is removed?
         """
         assert corpusname is not None, "Providing a corpusname is mandatory."
         assert playname is not None, "Providing a playname is mandatory."
@@ -656,14 +688,98 @@ class StableDraCor:
             logging.debug(f"Unknown error code returned by delete operation: {str(remove_status)}")
             return False
 
-    def add_plays_from_directory(self):
-        """Load local data and add it to a corpus
-        TODO: implement"""
-        raise Exception("Not implemented.")
+    def add_plays_from_directory(self,
+                                 corpusname: str,
+                                 directory: str,
+                                 corpus_metadata: dict = None
+                                 ):
+        """Load local data and add it to a corpus identified by corpusnam.
+        If the corpus does not exist, it will be created with minimal metadata.
+
+        Args:
+            corpusname (str): Identifier 'corpusname' of the corpus to add the plays to
+            directory (str): Path to the local directory
+            corpus_metadata (dict, optional): Metadata of the corpus to create
+            """
+
+        assert os.path.exists(directory), f"The directory {directory} does not exist."
+
+        files = os.listdir(directory)
+        logging.debug(files)
+
+        logging.debug(f"Checking if corpus '{corpusname}' already exists.")
+        corpus_exist = self.__corpus_exists(corpusname)
+
+        if corpus_exist is False:
+            logging.debug(f"Corpus '{corpusname}' does not exist. Need to create it.")
+
+            if corpus_metadata:
+                logging.debug("Corpus metadata is provided. Try to create the corpus with this metadata.")
+                # if the method add_corpus returns True, the corpus has been created
+                create_corpus_status = self.add_corpus(corpus_metadata)
+
+                assert create_corpus_status is True, f"Could not create '{corpusname}' with provided metadata. " \
+                                                     f"Plays can not be be loaded."
+
+            else:
+                logging.debug(f"No metadata provided for corpus."
+                              f" Will create a corpus with the name '{corpusname}'")
+                new_corpus_metadata = {"name": corpusname, "title": "No title provided."}
+                self.add_corpus(corpus_metadata=new_corpus_metadata)
+
+                assert self.__corpus_exists(corpusname) is True, f"Failed to create corpus {corpusname}."
+        success = []
+        errors = []
+
+        for file in files:
+            logging.debug(f"Importing {file} from directory {directory}.")
+            import_flag = True
+
+            filepath = directory + "/" + file
+            if ".xml" in file:
+                playname = file.split(".xml")[0]
+            else:
+                logging.debug("Maybe not an xml file according to the file extension.")
+                import_flag = False
+
+            # parsing the xml would not be necessary for import but this checks if the file is wellformed
+            # otherwise the API would reject it but I am not sure, what the API would return as error code
+            if import_flag is True:
+                try:
+                    xml = ET.parse(filepath)
+                except ParseError:
+                    logging.warning(f"File at '{filepath}' is not well-formed XML. Can not add '{file}'."
+                                    f"Should also check if file extension is '.xml'!")
+                    import_flag = False
+
+            if import_flag is True:
+
+                with open(filepath, "r") as f:
+                    tei = f.read().encode("utf-8")
+                    self.__api_put(
+                        tei,
+                        method="tei",
+                        corpusname=corpusname,
+                        playname=playname,
+                        username=self.__username,
+                        password=self.__password,
+                        headers={"Content-Type": "application/xml"})
+
+                success.append(file)
+                logging.info(f"Added TEI data from file '{file}' to corpus '{corpusname}'.")
+
+        if len(errors) == 0:
+            logging.info(f"Imported {str(len(success))} files from {directory} as corpus '{corpusname}'.")
+            return True
+        else:
+            logging.debug(f"Number of successful imports: {str(len(success))}.")
+            logging.debug(f"Number of errors: {str(len(errors))}.")
+            logging.debug(errors)
+            return False
 
     def add_play_version_to_corpus(self):
         """Add a play in a certain version from a git repository defined by a git commit to a corpus.
         TODO: implement"""
-        raise Exception("Not implememted.")
+        raise Exception("Not implemented.")
 
 
