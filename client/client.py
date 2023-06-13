@@ -304,6 +304,9 @@ class StableDraCor:
     # Description of the local instance
     description = None
 
+    # Base-URL of the GitHub API
+    __github_api_base_url = "https://api.github.com/"
+
     def __init__(self,
                  api_base_url: str = None,
                  username: str = None,
@@ -902,6 +905,119 @@ class StableDraCor:
             logging.debug("This else statement should not be reachable.")
             return False
 
+    def __get_latest_commit_hash_in_github_repo(self,
+                                                repository_name: str,
+                                                repository_owner: str = "dracor-org") -> str:
+        """Use the GitHUb API to get the commit-ID of the latest commit on a repository.
+        The method will get Github commits by using /repos/{owner}/{name}/commits. We assume that the first entry in
+        this list is the latest commit, but we have to tested it yet.
+
+        For example, a commit hash is necessary to retrieve the tree and thus the files at a given point in time.
+
+        Args:
+            repository_owner (str, optional): User owning the repository. Defaults to "dracor-org"
+            repository_name (str): Name of the repository.
+
+        TODO: Test if the first returned commit is the latest commit indeed.
+        """
+        request_url = f"{self.__github_api_base_url}repos/{repository_owner}/{repository_name}/commits"
+        r = requests.get(url=request_url)
+        if r.status_code == 200:
+            data = json.loads(r.text)
+            # this assumes that the latest commit is the first in the returned list
+            commit_data = data[0]
+            commit_hash = commit_data["sha"]
+            logging.debug(f"Retrieved latest (?) commit of repo '{repository_owner}/{repository_name}': {commit_hash}.")
+            return commit_hash
+        else:
+            logging.debug(f"Github API returned status code: {str(r.status_code)}.")
+
+    def list_plays_in_repo(self,
+                                  commit: str = None,
+                                  repository_name: str = None,
+                                  repository_owner: str = "dracor-org",
+                                  repository_base_url: str = "github.com",
+                                  repository_data_folder: str = "tei"
+                                  ):
+        """List TEI-XML files of plays in a repository. This has been tested with GitHub only.
+
+        Args:
+            commit (str, optional): Commit-ID representing the state of the repository at a given point in time.
+                If it is not set, the (probably) latest commit will be used.
+            repository_name (str): Name of the repository
+            repository_owner: Username of the user owning the repository. Defaults to "dracor-org"
+            repository_base_url: Base of the repository. If it is the default "github.com", the Github API will be used.
+            repository_data_folder: Path from root to folder containing the play data. Defaults to "tei"
+
+        Returns:
+
+        """
+        assert repository_name is not None, "Providing a repository name is mandatory!"
+
+        if commit is None:
+            logging.debug("No commit set. Getting latest commit.")
+            commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
+                                                                  repository_owner=repository_owner)
+        if repository_base_url != "github.com":
+            logging.critical(f"Not using Github. This is only implemented for the Github API. Will probably fail.")
+
+        logging.debug(f"Using Github to get the commit {commit} and the tree object thereof.")
+        request_url = f"{self.__github_api_base_url}repos/{repository_owner}/{repository_name}/commits/{commit}"
+        r = requests.get(url=request_url)
+        if r.status_code == 200:
+            commit_data = json.loads(r.text)
+            tree = commit_data["commit"]["tree"]
+            logging.debug(f"Got the Github tree of commit '{commit}': {tree['sha']} at url {tree['url']}.")
+        else:
+            logging.debug(f"Github returned status code '{str(r.status_code)}' when requesting {request_url}.")
+
+        if "/" in repository_data_folder:
+            logging.critical(f"Getting data in nested directories is not implemented. Can only get the contents of"
+                             f" a single data folder contained in the repository root.")
+
+        # get the tree and then the hash of the tree of the sub-folder
+        r = requests.get(url=tree["url"])
+        if r.status_code == 200:
+            repository_root_folder = json.loads(r.text)
+
+            if repository_root_folder["truncated"] is True:
+                logging.warning("Not all items in the root folder of the repository are included in the response.")
+
+            tree_objects_in_root_folder = repository_root_folder["tree"]
+            data_folder_object = list(filter(lambda item: item["path"] == repository_data_folder,
+                                             tree_objects_in_root_folder))[0]
+            logging.debug(data_folder_object)
+            logging.debug(f"Found data folder '{repository_data_folder}' in tree objects. "
+                          f" sha: {data_folder_object['sha']}, url: {data_folder_object['url']}.")
+        else:
+            logging.warning(f"GET request to get the data '{repository_data_folder}' folder failed!")
+            data_folder_object = None
+
+        if data_folder_object is not None:
+            logging.debug(f"Getting files in the data folder.")
+            r = requests.get(url=data_folder_object["url"])
+            if r.status_code == 200:
+                logging.debug("GET request returned contents of data folder.")
+                parsed_data_folder_tree_object = json.loads(r.text)
+
+                if parsed_data_folder_tree_object["truncated"] is True:
+                    logging.warning("The contents of the TEI folder are paged! Need to implement!")
+
+                file_objects = parsed_data_folder_tree_object["tree"]
+                logging.debug(f"Found {len(file_objects)} in the data folder tree.")
+
+                filenames = []
+                for item in file_objects:
+                    # exclude directories
+                    if item["type"] == "blob":
+                        filenames.append(item["path"])
+
+            else:
+                logging.warning(f"GET request to retrieve the contents of the data folder failed."
+                                f" Server returned status code: {str(r.status_code)}")
+                filenames = []
+
+            return filenames
 
     def list_dracor_github_repos(self):
         """List available Repositories of dracor-og on Github. This should allow for excluding
