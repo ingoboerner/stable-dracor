@@ -76,7 +76,7 @@ def api_get(
 
     if method == "tei":
         logging.debug("Requested TEI-XML, encoded in UTF-8.")
-        return r.text.encode('utf-8')
+        return r.text.encode("utf-8")
     elif parse_json is True:
         json_data = json.loads(r.text)
         logging.debug("Parsed response to JSON.")
@@ -777,9 +777,136 @@ class StableDraCor:
             logging.debug(errors)
             return False
 
-    def add_play_version_to_corpus(self):
-        """Add a play in a certain version from a git repository defined by a git commit to a corpus.
-        TODO: implement"""
+    def add_play_version_to_corpus(self,
+                                   corpusname: str = None,
+                                   playname: str = None,
+                                   commit: str = None,
+                                   filename: str = None,
+                                   repository_name: str = None,
+                                   repository_owner: str = "dracor-org",
+                                   repository_data_folder: str = "tei",
+                                   repository_blob_base_url: str = "raw.githubusercontent.com",
+                                   protocol: str = "https",
+                                   check: bool = True) -> bool:
+        f"""Add a play in a certain version from a git repository defined by a git commit to a corpus.
+
+        Args:
+            corpusname (str, optional): Identifier 'corpusname' of the local target corpus. 
+                If not set the mandatory repository_name will be used.
+            playname (str, optional): Identifier 'playname' in the target corpus. This is the name, the play will get.
+                If not set the mandatory filename will be used.
+            commit (str, optional): Commit-ID identifying a Version of the data in the repository.
+                If not set it will use the most recent data from the "main" branch.
+            filename (str): File name of the file containing the play data. The file extension ".xml" will be added.
+            repository_name (str): Name of the repository. This must not match the corpusname, e.g. "gerdracor".
+            repository_owner (str): Username of the user owning the repository. Defaults to "dracor-org"
+            repository_data_folder (str, optional): Path from the root folder of the repository to the folder containing 
+                the files. Defaults to "tei"
+            repository_blob_base_url (str): Base url to retrieve a blob/raw data from the repository. 
+                Defaults to "raw.githubusercontent.com"
+            protocol (str, optional): Protocol used in the request url. Defaults to "https"
+            check (bool, optional): Additional check if the play has been successfully added. Defaults to True.
+        """
+
+        assert repository_name is not None, "Providing the name of a repository (repository_name) is required."
+        assert filename is not None, "Providing a file name (filename) is required."
+
+        if commit is None:
+            logging.debug(f"Commit not set, will try to use latest version of {filename} from main branch.")
+            commit = "main"
+
+        if filename.endswith(".xml"):
+            checked_filename = filename
+        else:
+            checked_filename = f"{filename}.xml"
+
+        source_url = f"{protocol}://{repository_blob_base_url}/{repository_owner}/{repository_name}/{commit}/" \
+                     f"{repository_data_folder}/{checked_filename}"
+
+        logging.debug(f"Fetching github data from source url: {source_url}")
+
+        r = requests.get(url=source_url)
+        if r.status_code == 200:
+            import_flag = True
+            tei = r.text.encode("utf-8")
+            logging.debug(f"Could retrieve data from '{source_url}'.")
+        else:
+            import_flag = False
+            logging.debug(f"Retrieving data from '{source_url}' failed. Server returned: {str(r.status_code)}.")
+
+        # try to parse xml
+        if import_flag is True:
+            try:
+                xml = ET.fromstring(tei)
+                logging.debug("Could parse returned data. XML is well-formed.")
+            except ParseError:
+                logging.warning(f"File at url '{source_url}' is not well-formed XML. Can not add it to the database.")
+                import_flag = False
+
+        if corpusname is None:
+            logging.debug(f"Name of the target corpus is not provided. "
+                          f" Using the name of the repository '{repository_name}' as name of the corpus.")
+            corpusname = repository_name
+
+        if self.__corpus_exists(corpusname) is False:
+            logging.debug(f"Must create corpus '{corpusname}'.")
+            new_corpus_metadata = {"name": corpusname,
+                                   "title": "Automatically generated corpus",
+                                   "description": "This corpus has been created automatically "
+                                                  "because it did not exist during an import operation."}
+            self.add_corpus(corpus_metadata=new_corpus_metadata, check=False)
+
+        if playname is None:
+            playname = filename.replace(".xml", "")
+            logging.debug(f"Identifier 'playname' of the play is not set. Will use filename '{filename}' as "
+                          f" the identifier of the play: ('{playname}').")
+
+        if import_flag is True:
+            add_status = self.__api_put(
+                tei,
+                method="tei",
+                corpusname=corpusname,
+                playname=playname,
+                username=self.__username,
+                password=self.__password,
+                headers={"Content-Type": "application/xml"})
+
+            if add_status == 200:
+                logging.debug("PUT request to add data was successful.")
+            elif add_status == 404:
+                logging.debug(f"PUT request not successful. Corpus {corpusname} probably "
+                              f" does not exist. Can not add the data.")
+                import_flag = False
+            else:
+                logging.debug(f"PUT request to add data was not successful. Status code. {add_status}.")
+                import_flag = False
+
+        if check is True and import_flag is True:
+            logging.debug(f"Checking if play '{playname}' has been added to corpus '{corpusname}'.")
+            added_play = self.__api_get(corpusname=corpusname, playname=playname)
+            if type(added_play) == dict:
+                logging.info(f"Play '{playname}' retrieved from '{source_url}' has been successfully added "
+                             f"to corpus '{corpusname}'. Checked and found local play data.")
+                return True
+            else:
+                logging.warning(f"Play from '{source_url}' has not been added.")
+                return False
+        elif import_flag is True and check is False:
+            logging.info(f"Data of play '{playname}' retrieved from '{source_url}' most likely has been"
+                         f" added to corpus '{corpusname}'. Did not run additional check.")
+            return True
+        elif import_flag is False:
+            logging.warning(f"Could not add play from source '{source_url}'.")
+            return False
+        else:
+            logging.debug("This else statement should not be reachable.")
+            return False
+
+
+    def list_dracor_github_repos(self):
+        """List available Repositories of dracor-og on Github. This should allow for excluding
+        repositories that don't have a corpus.xml file in the root directory and no folder "tei" containing xml files
+        """
         raise Exception("Not implemented.")
 
 
