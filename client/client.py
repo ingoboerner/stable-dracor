@@ -409,13 +409,15 @@ class StableDraCor:
 
     def __github_api_get(self,
                          api_call: str = None,
+                         url: str = None,
                          headers: dict = None,
                          parse_json: bool = True,
                          **kwargs):
         """Send GET requests to the GitHub API.
 
         Args:
-            api_call (str): endpoint and parameters that should be sent to the GitHub API
+            api_call (str, optional): endpoint and parameters that should be sent to the GitHub API.
+            url (str, optional): Full URL to GET data from GitHub API. If provided, api_call will be ignored.
             headers (dict, optional): Headers to send with the GET request. If provided on class instance level,
                 will include the "Authorization" field with value of the personal access token and thus send authorized
                 requests.
@@ -433,9 +435,12 @@ class StableDraCor:
                     Authorization=f"Bearer {self.__github_access_token}"
                 )
 
-        if api_call is not None:
+        if api_call is not None and url is None:
             request_url = f"{github_api_base_url}{api_call}"
             logging.debug(f"Send GET request to GitHub: {request_url}")
+        elif url is not None:
+            request_url = url
+            logging.debug(f"Provided full URL to send GET request to GitHub: {request_url}.")
         else:
             request_url = github_api_base_url
             logging.debug(f"No specialized API call (api_call) provided. Will send GET request to GitHub API "
@@ -446,7 +451,7 @@ class StableDraCor:
         else:
             r = requests.get(url=request_url)
 
-        logging.debug(r.headers)
+        # logging.debug(r.headers)
         if "X-RateLimit-Remaining" in r.headers:
             if 1 < int(r.headers["X-RateLimit-Remaining"]) < 5:
                 logging.warning(f"Approaching maximum API calls (rate limit). Remaining: "
@@ -456,7 +461,9 @@ class StableDraCor:
                 if self.__github_access_token is None:
                     logging.warning("Requests to GitHub API are probably unauthorized. Provide a personal "
                                     "access token to get a higher rate limit. "
-                                    "See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic")
+                                    "See: https://docs.github.com/en/authentication/"
+                                    "keeping-your-account-and-data-secure/managing-your-personal-access-tokens"
+                                    "#creating-a-personal-access-token-classic")
 
         if r.status_code == 200:
             logging.debug(f"GET request to GitHub API was successful.")
@@ -469,7 +476,6 @@ class StableDraCor:
         else:
             logging.debug(f"GET request was not successful. Server returned status code: {str(r.status_code)}.")
             logging.debug(r.text)
-
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
@@ -992,19 +998,16 @@ class StableDraCor:
             repository_owner (str, optional): User owning the repository. Defaults to "dracor-org"
             repository_name (str): Name of the repository.
 
-        TODO: Test if the first returned commit is the latest commit indeed.
+        TODO: Investigate if the first returned commit is the latest commit indeed.
         """
-        request_url = f"{self.__github_api_base_url}repos/{repository_owner}/{repository_name}/commits"
-        r = requests.get(url=request_url)
-        if r.status_code == 200:
-            data = json.loads(r.text)
-            # this assumes that the latest commit is the first in the returned list
+        get_commits_api_call = f"repos/{repository_owner}/{repository_name}/commits"
+        data = self.__github_api_get(api_call=get_commits_api_call)
+
+        if data is not None:
             commit_data = data[0]
             commit_hash = commit_data["sha"]
             logging.debug(f"Retrieved latest (?) commit of repo '{repository_owner}/{repository_name}': {commit_hash}.")
             return commit_hash
-        else:
-            logging.debug(f"Github API returned status code: {str(r.status_code)}.")
 
     def list_plays_in_repo(self,
                                   commit: str = None,
@@ -1036,24 +1039,20 @@ class StableDraCor:
             logging.critical(f"Not using Github. This is only implemented for the Github API. Will probably fail.")
 
         logging.debug(f"Using Github to get the commit {commit} and the tree object thereof.")
-        request_url = f"{self.__github_api_base_url}repos/{repository_owner}/{repository_name}/commits/{commit}"
-        r = requests.get(url=request_url)
-        if r.status_code == 200:
-            commit_data = json.loads(r.text)
-            tree = commit_data["commit"]["tree"]
-            logging.debug(f"Got the Github tree of commit '{commit}': {tree['sha']} at url {tree['url']}.")
-        else:
-            logging.debug(f"Github returned status code '{str(r.status_code)}' when requesting {request_url}.")
+        get_commit_api_call = f"repos/{repository_owner}/{repository_name}/commits/{commit}"
+        commit_data = self.__github_api_get(api_call=get_commit_api_call)
+        tree = commit_data["commit"]["tree"]
+        logging.debug(f"Got the Github tree of commit '{commit}': {tree['sha']} at url {tree['url']}.")
 
         if "/" in repository_data_folder:
             logging.critical(f"Getting data in nested directories is not implemented. Can only get the contents of"
                              f" a single data folder contained in the repository root.")
 
         # get the tree and then the hash of the tree of the sub-folder
-        r = requests.get(url=tree["url"])
-        if r.status_code == 200:
-            repository_root_folder = json.loads(r.text)
+        repository_root_folder = self.__github_api_get(url=tree["url"])
 
+        # this is not the very best check in the world
+        if type(repository_root_folder) == dict:
             if repository_root_folder["truncated"] is True:
                 logging.warning("Not all items in the root folder of the repository are included in the response.")
 
@@ -1063,16 +1062,17 @@ class StableDraCor:
             logging.debug(data_folder_object)
             logging.debug(f"Found data folder '{repository_data_folder}' in tree objects. "
                           f" sha: {data_folder_object['sha']}, url: {data_folder_object['url']}.")
+
         else:
             logging.warning(f"GET request to get the data '{repository_data_folder}' folder failed!")
             data_folder_object = None
 
         if data_folder_object is not None:
             logging.debug(f"Getting files in the data folder.")
-            r = requests.get(url=data_folder_object["url"])
-            if r.status_code == 200:
-                logging.debug("GET request returned contents of data folder.")
-                parsed_data_folder_tree_object = json.loads(r.text)
+            parsed_data_folder_tree_object = self.__github_api_get(url=data_folder_object["url"])
+
+            # This is not the very best check in the world
+            if type(parsed_data_folder_tree_object) == dict:
 
                 if parsed_data_folder_tree_object["truncated"] is True:
                     logging.warning("The contents of the TEI folder are paged! Need to implement!")
@@ -1081,14 +1081,14 @@ class StableDraCor:
                 logging.debug(f"Found {len(file_objects)} in the data folder tree.")
 
                 filenames = []
+
                 for item in file_objects:
                     # exclude directories
                     if item["type"] == "blob":
                         filenames.append(item["path"])
 
             else:
-                logging.warning(f"GET request to retrieve the contents of the data folder failed."
-                                f" Server returned status code: {str(r.status_code)}")
+                logging.warning(f"GET request to retrieve the contents of the data folder failed.")
                 filenames = []
 
             return filenames
@@ -1128,41 +1128,40 @@ class StableDraCor:
         if use_metadata_of_corpus_xml is True:
             logging.debug(f"Get the repository root folder tree at commit '{commit}'.")
 
-            # TODO: refactor sending get requests to github because maybe will ned authorization
-            request_url = f"{self.__github_api_base_url}repos/{repository_owner}/{repository_name}/commits/{commit}"
-            r = requests.get(url=request_url)
-            if r.status_code == 200:
-                commit_data = json.loads(r.text)
+            get_commit_api_call = f"repos/{repository_owner}/{repository_name}/commits/{commit}"
+            commit_data = self.__github_api_get(api_call=get_commit_api_call)
+
+            if type(commit_data) == dict:
                 tree = commit_data["commit"]["tree"]
                 logging.debug(f"Got the Github tree of commit '{commit}': {tree['sha']} at url {tree['url']}.")
             else:
-                logging.debug(f"Github returned status code '{str(r.status_code)}' when requesting {request_url}.")
+                logging.debug(f"Getting the tree from GitHub was not successful.")
                 tree = None
 
             if tree is not None:
-                r = requests.get(url=tree["url"])
-                if r.status_code == 200:
-                    root_folder_tree_data = json.loads(r.text)
+                root_folder_tree_data = self.__github_api_get(url=tree["url"])
+
+                if type(root_folder_tree_data) == dict:
                     items = root_folder_tree_data["tree"]
                     corpus_xml_object = list(filter(lambda item: item["path"] == "corpus.xml",
                                              items))[0]
-                    logging.debug(corpus_xml_object)
+                    # logging.debug(corpus_xml_object)
 
                     if corpus_xml_object["type"] == "blob":
                         corpus_xml_blob_url = corpus_xml_object["url"]
                         logging.debug(f"Found corpus.xml blob at {corpus_xml_blob_url}.")
                     else:
                         logging.debug(f"Could not find url of corpus.xml blob.")
+                        corpus_xml_blob_url = None
                 else:
-                    logging.debug(f"GET request to get the tree of the root folder was not successful."
-                                  f" Server returned {str(r.status_code)}.")
+                    logging.debug(f"Requesting the tree of the root folder was not successful.")
+                    corpus_xml_blob_url = None
 
             if corpus_xml_blob_url is not None:
-                r = requests.get(url=corpus_xml_blob_url)
-                if r.status_code == 200:
-                    blob_data = json.loads(r.text)
+                # TODO: Continue here. Need to change to get_github_api stuff
+                blob_data = self.__github_api_get(url=corpus_xml_blob_url)
+                if "content" in blob_data:
                     corpus_xml_string = base64.b64decode(blob_data["content"])
-
                     corpus_xml = ET.fromstring(corpus_xml_string)
                 else:
                     logging.warning(f"Could not decode and parse corpus.xml. Operation might fail.")
@@ -1180,7 +1179,7 @@ class StableDraCor:
                     existing_corpus_metadata["title"] = corpus_title
                     logging.debug(f"Title: {corpus_title}")
 
-                corpus_name_e = corpus_xml.find("tei:teiHeader/tei:fileDesc/tei:publicationStmt/tei:idno[@type='uri']",
+                corpus_name_e = corpus_xml.find("tei:teiHeader/tei:fileDesc/tei:publicationStmt/tei:idno[@type='URI']",
                                                 ns)
                 if corpus_name_e is not None:
                     corpus_name = corpus_name_e.text
@@ -1239,25 +1238,32 @@ class StableDraCor:
         success = []
         errors = []
 
+        if exclude is None:
+            logging.debug("No plays are to be excluded.")
+            exclude = []
+
         for filename in filenames:
-            # TODO: need to handle the excludes here
-            add_file_status = self.add_play_version_to_corpus(
-                corpusname=new_corpusmetadata["name"],
-                commit=commit,
-                filename=filename,
-                repository_name=repository_name,
-                repository_owner=repository_owner)
-            if add_file_status is True:
-                success.append(filename)
+            if filename in exclude or f"{filename}.xml" in exclude:
+                logging.debug(f"File {filename} is excluded.")
+                pass
             else:
-                errors.append(filename)
+                add_file_status = self.add_play_version_to_corpus(
+                    corpusname=new_corpusmetadata["name"],
+                    commit=commit,
+                    filename=filename,
+                    repository_name=repository_name,
+                    repository_owner=repository_owner)
+                if add_file_status is True:
+                    success.append(filename)
+                else:
+                    errors.append(filename)
 
         if len(errors) == 0:
             logging.info(f"Successfully added all {len(success)} files to {new_corpusmetadata['name']}.")
             return True
         else:
             logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {new_corpusmetadata['name']}."
-                         f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
+                            f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
             return False
 
     def list_dracor_github_repos(self):
