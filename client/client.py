@@ -2,13 +2,14 @@
 
 import requests, json
 from requests.auth import HTTPBasicAuth
+from requests import ConnectionError
 import logging
 import uuid
 import os
 from xml.etree.ElementTree import ParseError
 from xml.etree import ElementTree as ET
 import base64
-
+import subprocess
 
 
 def construct_request_url(
@@ -308,6 +309,10 @@ class StableDraCor:
     # GitHub (Personal) Access Token
     __github_access_token = None
 
+    # Docker client
+    logging.debug("Initialize a Docker client")
+    docker = None
+
     def __init__(self,
                  api_base_url: str = None,
                  username: str = None,
@@ -363,6 +368,8 @@ class StableDraCor:
         else:
             logging.warning("Personal GitHub Access Token is not supplied. Requests to the GitHub API might be affected"
                             " by rate limiting.")
+        self.__check_operation_system()
+        self.__check_docker_installed()
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -476,6 +483,52 @@ class StableDraCor:
         else:
             logging.debug(f"GET request was not successful. Server returned status code: {str(r.status_code)}.")
             logging.debug(r.text)
+
+    def __check_docker_installed(self):
+        """Helper Function to test if Docker is installed and can execute commands"""
+        run_check = subprocess.run(["docker", "--version"], capture_output=True)
+        docker_version_string = run_check.stdout.decode("utf-8")
+
+        if "Docker version" in docker_version_string:
+            logging.info(f"Docker is available.")
+            return True
+        else:
+            logging.warning("Docker is not available and/or can not run subprocesses."
+                            "Install Docker Desktop: https://www.docker.com/products/docker-desktop/")
+            return False
+
+    def __check_operation_system(self):
+        """Helper Function to check if running on Windows."""
+        operation_system = os.name
+        logging.debug(f"Detected Operation System Type: '{operation_system}'")
+
+        if operation_system == 'nt':
+            logging.warning("The client has not been tested on Windows. There might be some limitations regarding "
+                            " the management of Docker images/containers. Please report any bugs.")
+
+        return operation_system
+
+    def list_docker_images(self):
+        """List Docker images available"""
+        # docker images repo1 --format "{{json . }}"
+        operation = subprocess.run(["docker", "images", "--format", '{{json . }}'], capture_output=True)
+        items = operation.stdout.decode("utf-8").split("\n")
+        images = []
+        for item in items:
+            if item != "":
+                image = json.loads(item)
+                images.append(image)
+        return images
+
+    def list_docker_containers(self):
+        operation = subprocess.run(["docker", "ps", "-a", "--format", '{{json . }}'], capture_output=True)
+        items = operation.stdout.decode("utf-8").split("\n")
+        containers = []
+        for item in items:
+            if item != "":
+                container = json.loads(item)
+                containers.append(container)
+        return containers
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
