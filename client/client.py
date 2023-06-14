@@ -7,6 +7,7 @@ import uuid
 import os
 from xml.etree.ElementTree import ParseError
 from xml.etree import ElementTree as ET
+import base64
 
 
 
@@ -304,15 +305,16 @@ class StableDraCor:
     # Description of the local instance
     description = None
 
-    # Base-URL of the GitHub API
-    __github_api_base_url = "https://api.github.com/"
+    # GitHub (Personal) Access Token
+    __github_access_token = None
 
     def __init__(self,
                  api_base_url: str = None,
                  username: str = None,
                  password: str = None,
                  name: str = None,
-                 description: str = None):
+                 description: str = None,
+                 github_access_token: str = None):
         """
 
         Args:
@@ -321,6 +323,8 @@ class StableDraCor:
              password (str, optional): Password of the admin user of the local instance. Default is set to ""
              name (str, optional): Name of the local instance
              description (str, optional): Description of the local instance
+             github_access_token (str, optional): Github Personal Access token used to indentify
+                when sending API requests to the GitHub API. Allows for higher rate limit then anonymous requests.
         """
 
         # Set a uuid
@@ -353,6 +357,12 @@ class StableDraCor:
             logging.info(f"Local DraCor API is available at {self.api_base_url}.")
         else:
             logging.warning(f"Local DraCor API is not available at {self.api_base_url}.")
+
+        if github_access_token is not None:
+            self.__github_access_token = github_access_token
+        else:
+            logging.warning("Personal GitHub Access Token is not supplied. Requests to the GitHub API might be affected"
+                            " by rate limiting.")
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -396,6 +406,70 @@ class StableDraCor:
         except ConnectionError:
             logging.debug("No API connection.")
             return False
+
+    def __github_api_get(self,
+                         api_call: str = None,
+                         headers: dict = None,
+                         parse_json: bool = True,
+                         **kwargs):
+        """Send GET requests to the GitHub API.
+
+        Args:
+            api_call (str): endpoint and parameters that should be sent to the GitHub API
+            headers (dict, optional): Headers to send with the GET request. If provided on class instance level,
+                will include the "Authorization" field with value of the personal access token and thus send authorized
+                requests.
+            parse_json (bool, optional): Parse the response as JSON. Defaults to True.
+
+        """
+        # Base-URL of the GitHub API
+        github_api_base_url = "https://api.github.com/"
+
+        if self.__github_access_token is not None:
+            if headers is not None:
+                headers["Authorization"] = f"Bearer {self.__github_access_token}"
+            else:
+                headers = dict(
+                    Authorization=f"Bearer {self.__github_access_token}"
+                )
+
+        if api_call is not None:
+            request_url = f"{github_api_base_url}{api_call}"
+            logging.debug(f"Send GET request to GitHub: {request_url}")
+        else:
+            request_url = github_api_base_url
+            logging.debug(f"No specialized API call (api_call) provided. Will send GET request to GitHub API "
+                          f" base url.")
+
+        if headers is not None:
+            r = requests.get(url=request_url, headers=headers)
+        else:
+            r = requests.get(url=request_url)
+
+        logging.debug(r.headers)
+        if "X-RateLimit-Remaining" in r.headers:
+            if 1 < int(r.headers["X-RateLimit-Remaining"]) < 5:
+                logging.warning(f"Approaching maximum API calls (rate limit). Remaining: "
+                                f" {r.headers['X-RateLimit-Remaining']}")
+            elif int(r.headers["X-RateLimit-Remaining"] == 1):
+                logging.warning(f"Reached rate limit of {r.headers['X-RateLimit-Limit']}.")
+                if self.__github_access_token is None:
+                    logging.warning("Requests to GitHub API are probably unauthorized. Provide a personal "
+                                    "access token to get a higher rate limit. "
+                                    "See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic")
+
+        if r.status_code == 200:
+            logging.debug(f"GET request to GitHub API was successful.")
+            if parse_json is True:
+                data = json.loads(r.text)
+                return data
+            else:
+                return r.text
+        # TODO implement the other status codes
+        else:
+            logging.debug(f"GET request was not successful. Server returned status code: {str(r.status_code)}.")
+            logging.debug(r.text)
+
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
@@ -950,7 +1024,7 @@ class StableDraCor:
             repository_data_folder: Path from root to folder containing the play data. Defaults to "tei"
 
         Returns:
-
+            list: List containing the file names of plays included in the repo at a point in time identified by a commit
         """
         assert repository_name is not None, "Providing a repository name is mandatory!"
 
@@ -1018,6 +1092,173 @@ class StableDraCor:
                 filenames = []
 
             return filenames
+
+    def add_corpus_from_repo(self,
+                             commit: str = None,
+                             repository_name: str = None,
+                             repository_owner: str = "dracor-org",
+                             repository_base_url: str = "github.com",
+                             repository_data_folder: str = "tei",
+                             use_metadata_of_corpus_xml: bool = True,
+                             corpus_metadata: dict = None,
+                             exclude: list = None) -> bool:
+        """Add a corpus from a repository
+
+        Args:
+            commit (str, optional): Commit-ID representing the state of the repository at a given point in time.
+                If it is not set, the (probably) latest commit will be used.
+            repository_name (str): Name of the repository
+            repository_owner: Username of the user owning the repository. Defaults to "dracor-org"
+            repository_base_url: Base of the repository. If it is the default "github.com", the Github API will be used.
+            repository_data_folder (str, optional): Path to the folder containing the files. Defaults to "tei"
+            use_metadata_of_corpus_xml (bool, optional): Use the file "corpus.xml" in the root folder for metadata.
+            corpus_metadata (dict, optional): Metadata to overwrite corpus metadata with.
+            exclude (list, optional): File names (without file extension .xml) of plays to exclude from new corpus.
+
+        Returns:
+            bool: True if successful
+        """
+        assert repository_name is not None, "Providing a repository name is required!"
+
+        if commit is None:
+            logging.debug("No commit set. Getting latest commit.")
+            commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
+                                                                  repository_owner=repository_owner)
+
+        if use_metadata_of_corpus_xml is True:
+            logging.debug(f"Get the repository root folder tree at commit '{commit}'.")
+
+            # TODO: refactor sending get requests to github because maybe will ned authorization
+            request_url = f"{self.__github_api_base_url}repos/{repository_owner}/{repository_name}/commits/{commit}"
+            r = requests.get(url=request_url)
+            if r.status_code == 200:
+                commit_data = json.loads(r.text)
+                tree = commit_data["commit"]["tree"]
+                logging.debug(f"Got the Github tree of commit '{commit}': {tree['sha']} at url {tree['url']}.")
+            else:
+                logging.debug(f"Github returned status code '{str(r.status_code)}' when requesting {request_url}.")
+                tree = None
+
+            if tree is not None:
+                r = requests.get(url=tree["url"])
+                if r.status_code == 200:
+                    root_folder_tree_data = json.loads(r.text)
+                    items = root_folder_tree_data["tree"]
+                    corpus_xml_object = list(filter(lambda item: item["path"] == "corpus.xml",
+                                             items))[0]
+                    logging.debug(corpus_xml_object)
+
+                    if corpus_xml_object["type"] == "blob":
+                        corpus_xml_blob_url = corpus_xml_object["url"]
+                        logging.debug(f"Found corpus.xml blob at {corpus_xml_blob_url}.")
+                    else:
+                        logging.debug(f"Could not find url of corpus.xml blob.")
+                else:
+                    logging.debug(f"GET request to get the tree of the root folder was not successful."
+                                  f" Server returned {str(r.status_code)}.")
+
+            if corpus_xml_blob_url is not None:
+                r = requests.get(url=corpus_xml_blob_url)
+                if r.status_code == 200:
+                    blob_data = json.loads(r.text)
+                    corpus_xml_string = base64.b64decode(blob_data["content"])
+
+                    corpus_xml = ET.fromstring(corpus_xml_string)
+                else:
+                    logging.warning(f"Could not decode and parse corpus.xml. Operation might fail.")
+                    corpus_xml = None
+
+            if corpus_xml is not None:
+                ns = {"tei": "http://www.tei-c.org/ns/1.0"}
+                logging.debug("Extracting corpus metadata from corpus.xml.")
+
+                existing_corpus_metadata = {}
+
+                corpus_title_e = corpus_xml.find("tei:teiHeader/tei:fileDesc/tei:titleStmt/tei:title", ns)
+                if corpus_title_e is not None:
+                    corpus_title = corpus_title_e.text
+                    existing_corpus_metadata["title"] = corpus_title
+                    logging.debug(f"Title: {corpus_title}")
+
+                corpus_name_e = corpus_xml.find("tei:teiHeader/tei:fileDesc/tei:publicationStmt/tei:idno[@type='uri']",
+                                                ns)
+                if corpus_name_e is not None:
+                    corpus_name = corpus_name_e.text
+                    existing_corpus_metadata["name"] = corpus_name
+                    logging.debug(f"Corpusname: {corpus_name}")
+
+                corpus_desc_elems = corpus_xml.findall("tei:teiHeader/tei:encodingDesc/tei:projectDesc/tei:p", ns)
+                if len(corpus_desc_elems) != 0:
+                    corpus_desc_texts = []
+                    for elem in corpus_desc_elems:
+                        corpus_desc_texts.append(elem.text)
+                    corpus_desc_text = "".join(corpus_desc_texts)
+                    existing_corpus_metadata["description"] = corpus_desc_text
+                    logging.debug(f"Description: {corpus_desc_text}")
+                    # TODO: this ignores included sub-elements, e.g. links
+
+                # TODO: Extract other metadata, e.g. licence, licenceUrl, and whatnot
+
+        if corpus_metadata is not None:
+            logging.debug("Prepare corpus metadata for creating corpus.")
+
+            if existing_corpus_metadata:
+                logging.debug("Overwriting corpus.xml extracted data with the provided corpus metadata.")
+                new_corpusmetadata = existing_corpus_metadata
+            else:
+                new_corpusmetadata = {}
+
+            for key in corpus_metadata.keys():
+                new_corpusmetadata[key] = corpus_metadata[key]
+
+        elif existing_corpus_metadata is not None:
+            new_corpusmetadata = existing_corpus_metadata
+
+        else:
+            logging.debug("Did not provide corpus metadata and not using corpus.xml.")
+            new_corpusmetadata = {"name": repository_name,
+                                  "title": "No title provided",
+                                  "description": "Corpus was created automatically during import of corpus "
+                                                 " repository from GitHub. The repository did not contain a"
+                                                 " corpus.xml file with corpus metadata."}
+
+        if "name" not in new_corpusmetadata:
+            logging.debug(f"No identifier corpusname for target corpus supplied. Use name of source repository"
+                          f" '{repository_name}'.")
+            new_corpusmetadata["name"] = repository_name
+
+        create_corpus_status = self.add_corpus(corpus_metadata=new_corpusmetadata, check=False)
+
+        filenames = self.list_plays_in_repo(commit=commit,
+                                            repository_owner=repository_owner,
+                                            repository_name=repository_name,
+                                            repository_base_url=repository_base_url,
+                                            repository_data_folder=repository_data_folder)
+        logging.debug(f"Got {len(filenames)} filenames from repo {repository_owner}/{repository_name}.")
+
+        success = []
+        errors = []
+
+        for filename in filenames:
+            # TODO: need to handle the excludes here
+            add_file_status = self.add_play_version_to_corpus(
+                corpusname=new_corpusmetadata["name"],
+                commit=commit,
+                filename=filename,
+                repository_name=repository_name,
+                repository_owner=repository_owner)
+            if add_file_status is True:
+                success.append(filename)
+            else:
+                errors.append(filename)
+
+        if len(errors) == 0:
+            logging.info(f"Successfully added all {len(success)} files to {new_corpusmetadata['name']}.")
+            return True
+        else:
+            logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {new_corpusmetadata['name']}."
+                         f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
+            return False
 
     def list_dracor_github_repos(self):
         """List available Repositories of dracor-og on Github. This should allow for excluding
