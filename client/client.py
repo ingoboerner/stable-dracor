@@ -309,9 +309,16 @@ class StableDraCor:
     # GitHub (Personal) Access Token
     __github_access_token = None
 
-    # Docker client
-    logging.debug("Initialize a Docker client")
-    docker = None
+    # Docker services
+    """
+    {"container" : "123"}
+    """
+    services = dict(
+        api=None,
+        frontend=None,
+        metrics=None,
+        triplestore=None
+    )
 
     def __init__(self,
                  api_base_url: str = None,
@@ -368,8 +375,15 @@ class StableDraCor:
         else:
             logging.warning("Personal GitHub Access Token is not supplied. Requests to the GitHub API might be affected"
                             " by rate limiting.")
+
+        # Check for the Operation System. Will output a Warning if working on Windows ;)
         self.__check_operation_system()
+
+        # Check if Docker is installed. Will issue a warning if not
         self.__check_docker_installed()
+
+        # Try to detect running docker services
+        self.__detect_docker_services()
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -520,15 +534,131 @@ class StableDraCor:
                 images.append(image)
         return images
 
-    def list_docker_containers(self):
-        operation = subprocess.run(["docker", "ps", "-a", "--format", '{{json . }}'], capture_output=True)
+    def list_docker_containers(self,
+                               only_running: bool = False) -> list:
+        """
+
+        Args:
+            only_running (bool): Filter on running containers. Defaults to False
+
+        Returns:
+            list: Containers
+        """
+        if only_running is True:
+            operation = subprocess.run(["docker", "ps", "--format", '{{json . }}'], capture_output=True)
+        else:
+            operation = subprocess.run(["docker", "ps", "-a", "--format", '{{json . }}'], capture_output=True)
+
         items = operation.stdout.decode("utf-8").split("\n")
+
         containers = []
         for item in items:
             if item != "":
                 container = json.loads(item)
                 containers.append(container)
+
         return containers
+
+    def __detect_single_docker_service(self,
+                                       name: str,
+                                       expected_image: str,
+                                       containers: list = None
+                                       ):
+        """Detect a single running Docker service based on the image used. We assume, that
+        the containers are build with the standard images, e.g. dracor/dracor-api, ... and that we can filter
+        for that.
+
+        Args:
+            name (str): Common name of the service, e.g. "api", "frontend", "tiplestore", "metrics"
+            expected_image (str): Filter the containers by image. We look for the standard images, e.g.
+                "dracor/dracor-api"
+            containers (list, optional): A list of containers that will be filtered based on the expected_image
+        """
+
+        if containers is None:
+            # if not set, get the running containers
+            containers = self.list_docker_containers(only_running=True)
+
+        container = list(filter(lambda item: f"{expected_image}" in item["Image"], containers))
+
+        if len(container) == 0:
+            logging.warning("Could not detect a running Docker container derived from a dracor/dracor-api image.")
+        elif len(container) == 1:
+            container_id = container[0]["ID"]
+            image = container[0]["Image"]
+            logging.info(f"Found {expected_image} container with ID {container_id}. Image is: {image}")
+
+            if self.services[name] is None:
+                self.set_service(name=name, container=container_id, image=image)
+            else:
+                if "container" in self.services[name]:
+                    if self.services[name]["container"] == container_id:
+                        logging.debug(f"Container {name} already registered.")
+                    else:
+                        logging.warning(f"A different Docker container (ID: {self.services[name]['container']}) is"
+                                        f" already registered as API service.")
+
+        else:
+            logging.warning(f"Found {len(container)} running Docker containers derived from a '{expected_image}' "
+                            f"image. Can not automatically detect if it is the database that shall be used. "
+                            f"Set the container manually!")
+
+    def __detect_docker_services(self):
+        """Helper function to detect running services.
+
+        can do this based on the image or the port?
+         e.g. 'Ports': '0.0.0.0:8080->8080/tcp', (Port would probably be the better option for API/frontend)
+        Ideally only one container would be running. This would be the container to work with."""
+
+        if "localhost:" in self.api_base_url:
+            api_port = self.api_base_url.split("/")[2].split(":")[1]
+            logging.debug(f"Port of API: {api_port}")
+
+        running_containers = self.list_docker_containers(only_running=True)
+        if len(running_containers) == 0:
+            logging.debug("No running Docker containers found.")
+        else:
+            logging.debug(f"Detected {len(running_containers)} running Docker containers.")
+            # logging.debug(running_containers)
+
+        expected_service_images = dict(
+            api="dracor/dracor-api",
+            frontend="dracor/dracor-frontend",
+            metrics="dracor/dracor-metrics",
+            triplestore="dracor/dracor-fuseki"
+        )
+
+        for service_name in expected_service_images.keys():
+            self.__detect_single_docker_service(name=service_name,
+                                                expected_image=expected_service_images[service_name],
+                                                containers=running_containers)
+
+    def set_service(self,
+                    name: str,
+                    container: str,
+                    image: str = None) -> dict:
+        """Register a service (docker container) with the client
+
+        Args:
+            name (str): Name of the service (one of "api","frontend","metrics","triplestore")
+            container (str): ID of the docker container running the service
+            image (str, optional): Name/Tag of the image the container is based on
+
+        Returns:
+            dict: data on the service
+        """
+        if name not in ["api", "frontend", "metrics", "triplestore"]:
+            logging.warning(f"Registering a non-canonical service: {name}")
+
+        if self.services[name] is None:
+            self.services[name] = dict(container=container)
+        else:
+            self.services[name]["container"] = container
+
+        if image is not None:
+            self.services[name]["image"] = image
+
+        return self.services[name]
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
