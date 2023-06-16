@@ -684,6 +684,59 @@ class StableDraCor:
 
         return self.services[name]
 
+    def create_docker_image_of_service(self,
+                                       service: str = "api",
+                                       image_namespace: str = "dracor",
+                                       image_name: str = "stable-dracor",
+                                       image_tag: str = None,
+                                       commit_message: str = None):
+        """Create a Docker image of one of the services, normally the dracor-api container.
+
+        Args:
+            service (str, optional): Name of the service to create an image of. Defaults to "api", but could be
+                any of self.services.
+            image_namespace (str, optional): Namespace the docker image will be added to. Defaults to "dracor".
+            image_name (str, optional): Name of the image. Defaults to "stable-dracor"
+            image_tag (str, optional): Tag of the image. This must be supplied if using dracor/stable-dracor.
+                Defaults to id of the running system (not recommended to use).
+            commit_message (str, option): Commit message that will be used in the docker commit command.
+        """
+        service_info = self.services[service]
+        logging.debug(f"Creating image of service '{service}'.")
+
+        container_id = service_info["container"]
+        containers = self.list_docker_containers()
+
+        container_data = list(filter(lambda item: item["ID"] == container_id, containers))[0]
+        # logging.debug(container_data)
+        container_state = container_data["State"]
+        logging.debug(f"Container {container_id} is in state: {container_state}.")
+
+        if container_state == "running" and service == "api":
+            logging.warning("The dracor-api container is running. There might be issues with the image, if it is"
+                            " create from a running container. Consider stopping it before creating the image.")
+
+        """
+        # make a clean shutdown of the eXist-DB container
+        # on shutting down the database with xmlrpc see https://exist-db.org/exist/apps/doc/devguide_xmlrpc
+        import xmlrpc.client
+        s = xmlrpc.client.ServerProxy('http://localhost:8080/exist/xmlrpc')
+        s.shutdown()
+        """
+
+        if image_tag is None:
+            image_tag = self.id
+
+        new_image = f"{image_namespace}/{image_name}:{image_tag}"
+
+        if commit_message is None:
+            commit_message = "Create image with StableDraCor client"
+
+        commit_operation = subprocess.run(["docker", "commit", "-m", f'"{commit_message}"', container_id, new_image], capture_output=True)
+
+        new_image_sha = commit_operation.stdout.decode("utf-8")
+        logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
+
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
         This information could be appended as docker labels when committing a running container.
@@ -1324,6 +1377,7 @@ class StableDraCor:
 
         Returns:
             bool: True if successful
+        TODO: There seems to be some issues when trying to add CzeDracor
         """
         assert repository_name is not None, "Providing a repository name is required!"
 
