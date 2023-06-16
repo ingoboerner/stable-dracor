@@ -733,6 +733,7 @@ class StableDraCor:
             commit_message = "Create image with StableDraCor client"
 
         commit_operation = subprocess.run(["docker", "commit", "-m", f'"{commit_message}"', container_id, new_image], capture_output=True)
+        # TODO: should add labels here! e.g. org.dracor.stable-dracor.services, id = self.id
 
         new_image_sha = commit_operation.stdout.decode("utf-8")
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
