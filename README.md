@@ -1,7 +1,7 @@
 ## Full stack of DraCor services
 Run a complete local stack of DraCor services (API, frontend, metrics service, triple store)
 ``docker compose -f compose.fullstack.empty.yml up`
-
+User `admin`, Password is empty
 
 ## Jupyter lab with kernel
 with `pyenv` and `pyenv-virtualenv` installed:
