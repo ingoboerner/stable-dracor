@@ -792,16 +792,18 @@ class StableDraCor:
 
     def publish_docker_image(self,
                              user: str = None,
-                             password: str = None):
+                             password: str = None,
+                             logout: bool = True):
         """Push an image e.g. to Dockerhub
         Args:
             user (str, optional): Username on Dockerhub
             password (str, optional): Password on Dockerhub
+            logout (bool, optional): Logout from docker after pushing the image
         """
         # docker login --username foo --password-stdin
 
         if user is not None and password is not None:
-            password_bytes = bytes(password,"utf-8")
+            password_bytes = bytes(password, "utf-8")
             login_operation = subprocess.run(
                 ["docker", "login", "--username", f"{user}", "--password-stdin"], input=password_bytes, capture_output=True)
             logging.debug("Tried logging in to DockerHub: ")
@@ -812,8 +814,13 @@ class StableDraCor:
         for image in self.__images_to_be_pushed:
             push_operation = subprocess.run(["docker", "push", f"{image}"])
 
+        logging.debug("Pushed images to DockerHub.")
         # reset
         self.__images_to_be_pushed = []
+
+        if logout is True:
+            logout_operation = subprocess.run(["docker", "logout"])
+            logging.debug("Logged user out of Dockerhub.")
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
