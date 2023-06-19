@@ -726,7 +726,8 @@ class StableDraCor:
                                        image_namespace: str = "dracor",
                                        image_name: str = "stable-dracor",
                                        image_tag: str = None,
-                                       commit_message: str = None):
+                                       commit_message: str = None,
+                                       update_services: bool = True):
         """Create a Docker image of one of the services, normally the dracor-api container.
 
         Args:
@@ -736,7 +737,9 @@ class StableDraCor:
             image_name (str, optional): Name of the image. Defaults to "stable-dracor"
             image_tag (str, optional): Tag of the image. This must be supplied if using dracor/stable-dracor.
                 Defaults to id of the running system (not recommended to use).
-            commit_message (str, option): Commit message that will be used in the docker commit command.
+            commit_message (str, optional): Commit message that will be used in the docker commit command.
+            update_services (bool, optional): Replace the image in services with the newly created image.
+                Defaults to True.
         """
         service_info = self.services[service]
         logging.debug(f"Creating image of service '{service}'.")
@@ -790,6 +793,10 @@ class StableDraCor:
 
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
 
+        if update_services is True:
+            self.services[service]["image"] = new_image
+            logging.debug(f"Updated services. Image {new_image} is set as service '{service}'.")
+
     def publish_docker_image(self,
                              user: str = None,
                              password: str = None,
@@ -821,6 +828,10 @@ class StableDraCor:
         if logout is True:
             logout_operation = subprocess.run(["docker", "logout"])
             logging.debug("Logged user out of Dockerhub.")
+
+    def create_compose_file(self):
+        """Write the current configuration as a compose file"""
+        raise Exception("Not implemented.")
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
