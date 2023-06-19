@@ -320,6 +320,9 @@ class StableDraCor:
         triplestore=None
     )
 
+    # List of images to push to dockerhub when calling the method
+    __images_to_be_pushed = []
+
     def __init__(self,
                  api_base_url: str = None,
                  username: str = None,
@@ -691,8 +694,7 @@ class StableDraCor:
         """
 
         label_data = {
-            "org.dracor.stable-dracor.id": self.id,
-            "org.dracor.stable-dracor.services": json.dumps(self.services, separators=(',', ':'))
+            "org.dracor.stable-dracor.id": self.id
         }
 
         if self.name is not None:
@@ -700,6 +702,14 @@ class StableDraCor:
 
         if self.description is not None:
             label_data["org.dracor.stable-dracor.description"] = self.description
+
+        # org.dracor.stable-dracor.service-images:
+        # contains the information about the images used for the DraCor microservices when creating the container
+        service_images = {}
+        for key in self.services.keys():
+            service_images[key] = self.services[key]["image"]
+
+        label_data["org.dracor.stable-dracor.service-images"] = json.dumps(service_images, separators=(',', ':'))
 
         labels = []
 
@@ -775,13 +785,35 @@ class StableDraCor:
             capture_output=True)
 
         new_image_sha = commit_operation.stdout.decode("utf-8")
+
+        self.__images_to_be_pushed.append(new_image)
+
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
 
-    def publish_docker_image(self):
+    def publish_docker_image(self,
+                             user: str = None,
+                             password: str = None):
         """Push an image e.g. to Dockerhub
-        TODO: implement method to push to dockerhub
+        Args:
+            user (str, optional): Username on Dockerhub
+            password (str, optional): Password on Dockerhub
         """
-        raise Exception("Not implemented")
+        # docker login --username foo --password-stdin
+
+        if user is not None and password is not None:
+            password_bytes = bytes(password,"utf-8")
+            login_operation = subprocess.run(
+                ["docker", "login", "--username", f"{user}", "--password-stdin"], input=password_bytes, capture_output=True)
+            logging.debug("Tried logging in to DockerHub: ")
+            logging.debug(login_operation.stdout.decode("utf-8"))
+
+        logging.debug(f"Following images will be pushed: {', '.join(self.__images_to_be_pushed)}.")
+
+        for image in self.__images_to_be_pushed:
+            push_operation = subprocess.run(["docker", "push", f"{image}"])
+
+        # reset
+        self.__images_to_be_pushed = []
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
