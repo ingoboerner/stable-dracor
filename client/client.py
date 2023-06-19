@@ -684,6 +684,33 @@ class StableDraCor:
 
         return self.services[name]
 
+    def __create_docker_image_labels(self):
+        """Helper Function to create Docker Labels to append when committing an image
+        Creates a string that can be used in the docker commit command with the option -c or --change, e.g.
+         LABEL multi.label1="value1" multi.label2="value2" other="value3"
+        """
+
+        label_data = {
+            "org.dracor.stable-dracor.id": self.id,
+            "org.dracor.stable-dracor.services": json.dumps(self.services, separators=(',', ':'))
+        }
+
+        if self.name is not None:
+            label_data["org.dracor.stable-dracor.name"] = self.name
+
+        if self.description is not None:
+            label_data["org.dracor.stable-dracor.description"] = self.description
+
+        labels = []
+
+        for key in label_data.keys():
+            label_string = f'{key}="{label_data[key]}"'
+            labels.append(label_string)
+
+        joined_labels = "LABEL " + " ".join(labels)
+
+        return joined_labels
+
     def create_docker_image_of_service(self,
                                        service: str = "api",
                                        image_namespace: str = "dracor",
@@ -734,8 +761,18 @@ class StableDraCor:
         if commit_message is None:
             commit_message = "Create image with StableDraCor client"
 
-        commit_operation = subprocess.run(["docker", "commit", "-m", f'"{commit_message}"', container_id, new_image], capture_output=True)
-        # TODO: should add labels here! e.g. org.dracor.stable-dracor.services, id = self.id
+        labels = self.__create_docker_image_labels()
+
+        commit_operation = subprocess.run([
+            "docker",
+            "commit",
+            "-m",
+            f'"{commit_message}"',
+            "-c",
+            f"{labels}",
+            container_id,
+            new_image],
+            capture_output=True)
 
         new_image_sha = commit_operation.stdout.decode("utf-8")
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
