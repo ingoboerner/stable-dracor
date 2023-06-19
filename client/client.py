@@ -724,6 +724,8 @@ class StableDraCor:
         s.shutdown()
         """
 
+        # TODO: Must test with Capek thing if it causes problems when committing a running container
+
         if image_tag is None:
             image_tag = self.id
 
@@ -737,6 +739,12 @@ class StableDraCor:
 
         new_image_sha = commit_operation.stdout.decode("utf-8")
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
+
+    def publish_docker_image(self):
+        """Push an image e.g. to Dockerhub
+        TODO: implement method to push to dockerhub
+        """
+        raise Exception("Not implemented")
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
