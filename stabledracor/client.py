@@ -634,32 +634,32 @@ class StableDraCor:
                                                 containers=running_containers)
 
     def __run_services_with_docker_compose(self,
-                                           path_to_compose_file: str = None,
-                                           url_of_compose_file: str = None):
+                                           compose_file: str = None,
+                                           url: str = None):
         """Run services with a docker compose file. Can use either a local compose file or use one that is
         downloaded from a URL.
-        """
 
+        Args:
+            compose_file (str, optional): Path to a compose file.
+            url (str, optional): URL to a compose file.
+        """
+        if compose_file is None and url is None:
+            logging.debug("No compose file provided. Will fetch from X, but this is not implemented yet.")
+        # TODO: implement logic to get a compose file
         # first check if a path to a compose file is provided, if not
-        # check if there is a file "compose.yml" in the working directory
         # if not alert and fetch it from the source repo
+        elif compose_file is not None:
+            operation = subprocess.run(["docker", "compose", "-f", compose_file, "up", "-d"])
+            logging.debug(f"Started with docker compose file {compose_file}")
+            return True
+        elif url is not None:
+            logging.critical("Not implemented to start from a url. Need to supply compose file.")
+            return False
+        else:
+            logging.warning("Can not start containers. Compose file not specified.")
 
         # Maybe add a method to write compose file
         # list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
-        
-        # need to switch on path or url
-
-        # This reads the compose file
-        """
-        with open(path_to_compose_file, "r") as f:
-            contents = f.read()
-            logging.debug(contents)
-        """
-        # need to check if a file is there
-
-        # this works:
-        operation = subprocess.run(["docker", "compose", "-f", path_to_compose_file, "up", "-d"])
-        logging.debug(f"Started with docker compose file {path_to_compose_file}")
 
     def run(self):
         """Run a stack of DraCor Services"""
