@@ -10,6 +10,7 @@ from xml.etree.ElementTree import ParseError
 from xml.etree import ElementTree as ET
 import base64
 import subprocess
+import yaml
 
 
 def construct_request_url(
@@ -829,9 +830,87 @@ class StableDraCor:
             logout_operation = subprocess.run(["docker", "logout"])
             logging.debug("Logged user out of Dockerhub.")
 
-    def create_compose_file(self):
-        """Write the current configuration as a compose file"""
-        raise Exception("Not implemented.")
+    def create_compose_file(self,
+                            filename: str = None):
+        """Write the current configuration as a compose file
+
+        Args:
+            filename (str, optional): Overwrite the filename. Default will include self.name if available, else
+                self.id.
+
+        TODO: There is a lot of things hardcoded.. Better integrate self.services and the compose file
+        """
+        compose_file = dict(
+            services={}
+        )
+
+        for key in self.services.keys():
+            compose_file["services"][key] = {}
+            compose_file["services"][key]["image"] = self.services[key]["image"]
+
+            # This is currently hardcoded, maybe this should fetch these parts from the running system?
+
+            if key == "api":
+
+                compose_file["services"][key]["environment"] = [
+                    "DRACOR_API_BASE=http://localhost:8088/api",
+                    "EXIST_PASSWORD ="
+                ]
+
+                compose_file["services"][key]["ports"] = [
+                    "8080:8080"
+                ]
+
+                compose_file["services"][key]["depends_on"] = [
+                    "fuseki",
+                    "metrics"
+                ]
+
+            elif key == "metrics":
+
+                compose_file["services"][key]["ports"] = [
+                    "8030:8030"
+                ]
+
+            elif key == "frontend":
+
+                compose_file["services"][key]["environment"] = [
+                    "DRACOR_API=http://api:8080/exist/restxq"
+                ]
+
+                compose_file["services"][key]["ports"] = [
+                    "8088:80"
+                ]
+
+                compose_file["services"][key]["depends_on"] = [
+                    "api"
+                ]
+
+            elif key == "triplestore":
+                compose_file["services"][key]["environment"] = [
+                    "ADMIN_PASSWORD=qwerty"
+                ]
+
+                compose_file["services"][key]["ports"] = [
+                    "3030:3030"
+                ]
+
+        if self.name is not None:
+            title = f"# Stable DraCor System '{self.name}'"
+        else:
+            title = "# Stable DraCor System"
+
+        if filename is None:
+            if self.name is not None:
+                filename = f"compose.{self.name}.yml"
+            else:
+                filename = f"compose.{self.id}.yml"
+
+        with open(filename, "w") as f:
+            f.write(title)
+            f.write("\n")
+            yaml.dump(compose_file, f)
+            logging.info(f"Stored configuration (docker-compose file) as {filename}.")
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
