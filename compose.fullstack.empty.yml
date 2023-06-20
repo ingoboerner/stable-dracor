@@ -23,7 +23,7 @@ services:
   frontend:
     image: "dracor/dracor-frontend:v1.6.0-dirty"
     environment:
-      DRACOR_API: http://api:8080/exist/restxq
+      - DRACOR_API=http://api:8080/exist/restxq
     ports:
       - "8088:80"
     depends_on:
