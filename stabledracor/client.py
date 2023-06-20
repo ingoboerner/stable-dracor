@@ -634,11 +634,15 @@ class StableDraCor:
                                                 containers=running_containers)
 
     def __run_services_with_docker_compose(self,
-                                           path_to_compose_file: str = "compose.fullstack.empty.yml",
+                                           path_to_compose_file: str = None,
                                            url_of_compose_file: str = None):
         """Run services with a docker compose file. Can use either a local compose file or use one that is
         downloaded from a URL.
         """
+
+        # first check if a path to a compose file is provided, if not
+        # check if there is a file "compose.yml" in the working directory
+        # if not alert and fetch it from the source repo
 
         # Maybe add a method to write compose file
         # list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
