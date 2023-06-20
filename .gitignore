@@ -4,3 +4,6 @@
 .python-version
 test_import_dir
 client/__pycache__/
+.compose.fullstack.empty.yml.swp
+compose.test.yml
+stabledracor/__pycache__/
