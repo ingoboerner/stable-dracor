@@ -12,7 +12,7 @@ Disclaimer: The client is in an early stage of development. Use with care.
 With Docker/[Docker Desktop](https://www.docker.com/products/docker-desktop) installed:
 
 ```
-from stabledracor.client import StableDraCor
+from stabledracor import StableDraCor
 local_dracor = StableDraCor(name="my_local_dracor", description="My local demo DraCor system")
 
 # create a full stack of dracor services as docker containers. The database will be empty, see http://localhost:8088
