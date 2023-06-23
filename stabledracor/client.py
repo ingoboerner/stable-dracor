@@ -362,10 +362,7 @@ class StableDraCor:
         self.__check_docker_installed()
 
         # Docker services
-        # Initially assume, that there are no services
-        """
-        {"container" : "123"}
-        """
+        # Initially assume, that there are no services running, but try to locate them in the next step
         self.services = dict(
             api=None,
             frontend=None,
@@ -378,6 +375,9 @@ class StableDraCor:
 
         # List of images to push to dockerhub when calling the method
         self.__images_to_be_pushed = []
+
+        # docker-compose file
+        self.__docker_compose_file = None
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -652,6 +652,7 @@ class StableDraCor:
         # first check if a path to a compose file is provided, if not
         # if not alert and fetch it from the source repo
         elif compose_file is not None:
+
             operation = subprocess.run(["docker",
                                         "compose",
                                         "-p",
@@ -661,6 +662,8 @@ class StableDraCor:
                                         "up",
                                         "-d"])
             logging.debug(f"Started with docker compose file {compose_file}")
+            self.__docker_compose_file = compose_file
+
             return True
         elif url is not None:
             logging.critical("Not implemented to start from a url. Need to supply compose file.")
@@ -668,8 +671,7 @@ class StableDraCor:
         else:
             logging.warning("Can not start containers. Compose file not specified.")
 
-        # Maybe add a method to write compose file
-        # list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
+        # TODO: list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
 
     def run(self,
             compose_file: str = None):
@@ -679,6 +681,40 @@ class StableDraCor:
 
         # Try to detect running docker services
         self.__detect_docker_services()
+
+    def __stop_docker_container_by_id(self, container_id:str):
+        """Helper Function to stop a single Docker container identified by its ID"""
+        stop_operation = subprocess.run(["docker", "stop", f"{container_id}"])
+
+    def __stop_docker_stack(self):
+        """Helper function to stop the whole docker stack
+        docker compose -f {compose_file} stop does not work – maybe because of the containers
+        running in detached mode, therefore we stop all containers in self.services..
+        TODO: this should maybe return a status
+        """
+        for key in self.services.keys():
+            container = self.services[key]["container"]
+            self.__stop_docker_container_by_id(container)
+            logging.info(f"Stopped container '{container}'.")
+
+    def stop(self,
+             container: str = None,
+             service: str = None
+             ):
+        """Stop the whole stack (if no container ID supplied; or a single container)"""
+        if container is not None and service is None:
+            self.__stop_docker_container_by_id(container)
+            logging.debug(f"Stopping container {container}.")
+        elif service is not None and container is None:
+            container = self.services[service]["container"]
+            self.__stop_docker_container_by_id(container)
+            logging.info(f"Stopping service '{service}' running as container {container}.")
+        else:
+            if self.__docker_compose_file is not None:
+                logging.debug("Stopping all services.")
+                self.__stop_docker_stack()
+            else:
+                logging.warning("Can not stop stack. No compose file is set.")
 
     def set_service(self,
                     name: str,
