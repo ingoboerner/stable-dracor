@@ -1,0 +1,21 @@
+[build-system]
+requires = [
+    "setuptools >= 65",
+    "wheel >= 0.38,
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stabledracor"
+version = "0.1.0"
+description = "Python package to simplify setting up a local DraCor system using Docker"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE.txt"}
+authors = [
+    {name = "Ingo Börner", email = "ingo.boerner@uni-potsdam.de"},
+]
+dependencies = [
+    "requests>=2.31.0",
+    "PyYAML>=6.0"
+]
