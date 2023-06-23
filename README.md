@@ -4,6 +4,9 @@ A Python package to simplify setting up a local [DraCor](https://dracor.org) sys
 
 Disclaimer: The client is in an early stage of development. Use with care.
 
+## Install
+`pip3 install .`
+
 ## Use
 
 With Docker/[Docker Desktop](https://www.docker.com/products/docker-desktop) installed:
