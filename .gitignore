@@ -7,3 +7,5 @@ src/stabledracor/__pycache__/
 .compose.fullstack.empty.yml.swp
 compose.test.yml
 stabledracor/__pycache__/
+build/
+src/stabledracor.egg-info/
