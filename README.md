@@ -47,7 +47,7 @@ For a more detailed introduction see the how-to notebook.
 ### Full stack of DraCor services
 Run a complete local stack of DraCor services (API, frontend, metrics service, triple store) 
 using Docker and docker-compose only:
-`docker compose -f compose.fullstack.empty.yml up`
+`docker compose -f configurations/compose.fullstack.empty.yml up`
 User `admin`, Password is empty
 
 ### Use Jupyter lab with custom kernel
