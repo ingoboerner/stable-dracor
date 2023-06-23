@@ -278,11 +278,6 @@ there are changes necessary that can't be included in DraCor but want to be pers
 
 class StableDraCor:
     """Stable Local DraCor instance
-
-    Attributes:
-        api_base_url (str): URL of the local DraCor API
-        name (str, optional): Name of the local DraCor instance
-        description (str, optional): Description of the local DraCor instance
     """
 
     # URLs of external DraCor APIs
@@ -290,39 +285,6 @@ class StableDraCor:
         production="https://dracor.org/api/",
         staging="https://staging.dracor.org/api/",
     )
-
-    # Default URL of a local Dracor instance
-    api_base_url = "http://localhost:8088/api/"
-
-    # Default credentials
-    __username = "admin"
-    __password = ""
-
-    # unique id of the local instance
-    id = None
-
-    # Name of the local instance
-    name = None
-
-    # Description of the local instance
-    description = None
-
-    # GitHub (Personal) Access Token
-    __github_access_token = None
-
-    # Docker services
-    """
-    {"container" : "123"}
-    """
-    services = dict(
-        api=None,
-        frontend=None,
-        metrics=None,
-        triplestore=None
-    )
-
-    # List of images to push to dockerhub when calling the method
-    __images_to_be_pushed = []
 
     def __init__(self,
                  api_base_url: str = None,
@@ -350,22 +312,34 @@ class StableDraCor:
         if name is not None:
             logging.debug(f"Set name to: {name}")
             self.name = name
+        else:
+            self.name = None
 
         if description is not None:
             logging.debug(f"Set description to: {name}")
             self.description = description
+        else:
+            self.description = None
 
         if api_base_url is not None:
             logging.debug(f"Update api_base_url with: {api_base_url}")
             self.api_base_url = api_base_url
+        else:
+            self.api_base_url = "http://localhost:8088/api/"
 
         if username is not None:
             logging.debug(f"Update username with: {api_base_url}")
             self.__username = username
+        else:
+            logging.debug("Using default username 'admin'.")
+            self.__username = "admin"
 
         if password is not None:
             logging.debug(f"Update password with: {api_base_url}")
             self.__password = password
+        else:
+            logging.debug("Using default password: ''.")
+            self.__password = ""
 
         logging.info(f"Initialized new StableDraCor instance: '{self.name}' (ID: {self.id}).")
 
@@ -377,6 +351,7 @@ class StableDraCor:
         if github_access_token is not None:
             self.__github_access_token = github_access_token
         else:
+            self.__github_access_token = None
             logging.warning("Personal GitHub Access Token is not supplied. Requests to the GitHub API might be affected"
                             " by rate limiting.")
 
@@ -386,8 +361,23 @@ class StableDraCor:
         # Check if Docker is installed. Will issue a warning if not
         self.__check_docker_installed()
 
+        # Docker services
+        # Initially assume, that there are no services
+        """
+        {"container" : "123"}
+        """
+        self.services = dict(
+            api=None,
+            frontend=None,
+            metrics=None,
+            triplestore=None
+        )
+
         # Try to detect running docker services
         self.__detect_docker_services()
+
+        # List of images to push to dockerhub when calling the method
+        self.__images_to_be_pushed = []
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -600,7 +590,9 @@ class StableDraCor:
                         logging.debug(f"Container {name} already registered.")
                     else:
                         logging.warning(f"A different Docker container (ID: {self.services[name]['container']}) is"
-                                        f" already registered as API service.")
+                                        f" already registered as service {name}.")
+                        logging.debug(f"Already registered container: {self.services[name]['container']}.")
+                        logging.debug(f"Container that should be registed now: {container_id}.")
 
         else:
             logging.warning(f"Found {len(container)} running Docker containers derived from a '{expected_image}' "
@@ -633,6 +625,12 @@ class StableDraCor:
                                                 expected_image=expected_service_images[service_name],
                                                 containers=running_containers)
 
+        # API/eXist could also be derived from dracor/stable-dracor:{tag} this should be also checked
+        if self.services["api"] is None:
+            self.__detect_single_docker_service(name="api",
+                                                expected_image="dracor/stable-dracor",
+                                                containers=running_containers)
+
     def __run_services_with_docker_compose(self,
                                            compose_file: str = None,
                                            url: str = None):
@@ -643,13 +641,25 @@ class StableDraCor:
             compose_file (str, optional): Path to a compose file.
             url (str, optional): URL to a compose file.
         """
+        if self.name:
+            stack_name = self.name
+        else:
+            stack_name = "stable-dracor"
+
         if compose_file is None and url is None:
             logging.debug("No compose file provided. Will fetch from X, but this is not implemented yet.")
         # TODO: implement logic to get a compose file
         # first check if a path to a compose file is provided, if not
         # if not alert and fetch it from the source repo
         elif compose_file is not None:
-            operation = subprocess.run(["docker", "compose", "-f", compose_file, "up", "-d"])
+            operation = subprocess.run(["docker",
+                                        "compose",
+                                        "-p",
+                                        f"{stack_name}",
+                                        "-f",
+                                        compose_file,
+                                        "up",
+                                        "-d"])
             logging.debug(f"Started with docker compose file {compose_file}")
             return True
         elif url is not None:
@@ -661,9 +671,14 @@ class StableDraCor:
         # Maybe add a method to write compose file
         # list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
 
-    def run(self):
-        """Run a stack of DraCor Services"""
-        self.__run_services_with_docker_compose()
+    def run(self,
+            compose_file: str = None):
+        """Run a stack of DraCor Services
+        TODO: this needs better documentation"""
+        self.__run_services_with_docker_compose(compose_file=compose_file)
+
+        # Try to detect running docker services
+        self.__detect_docker_services()
 
     def set_service(self,
                     name: str,
@@ -835,7 +850,7 @@ class StableDraCor:
             logging.debug("Logged user out of Dockerhub.")
 
     def create_compose_file(self,
-                            filename: str = None):
+                            file_name: str = None):
         """Write the current configuration as a compose file
 
         Args:
@@ -866,7 +881,7 @@ class StableDraCor:
                 ]
 
                 compose_file["services"][key]["depends_on"] = [
-                    "fuseki",
+                    "triplestore",
                     "metrics"
                 ]
 
@@ -904,17 +919,17 @@ class StableDraCor:
         else:
             title = "# Stable DraCor System"
 
-        if filename is None:
+        if file_name is None:
             if self.name is not None:
-                filename = f"compose.{self.name}.yml"
+                file_name = f"compose.{self.name}.yml"
             else:
-                filename = f"compose.{self.id}.yml"
+                file_name = f"compose.{self.id}.yml"
 
-        with open(filename, "w") as f:
+        with open(file_name, "w") as f:
             f.write(title)
             f.write("\n")
             yaml.dump(compose_file, f)
-            logging.info(f"Stored configuration (docker-compose file) as {filename}.")
+            logging.info(f"Stored configuration (docker-compose file) as {file_name}.")
 
     def load_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
