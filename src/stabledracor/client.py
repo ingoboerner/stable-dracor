@@ -633,24 +633,52 @@ class StableDraCor:
 
     def __run_services_with_docker_compose(self,
                                            compose_file: str = None,
-                                           url: str = None):
+                                           url: str = None,
+                                           fetch_default_compose: bool = False):
         """Run services with a docker compose file. Can use either a local compose file or use one that is
         downloaded from a URL.
 
         Args:
             compose_file (str, optional): Path to a compose file.
             url (str, optional): URL to a compose file.
+            fetch_default_compose (bool, optional): Flag to trigger fetching default docker compose file from GitHub.
+                Defaults to False
         """
         if self.name:
             stack_name = self.name
         else:
             stack_name = "stable-dracor"
 
-        if compose_file is None and url is None:
-            logging.debug("No compose file provided. Will fetch from X, but this is not implemented yet.")
-        # TODO: implement logic to get a compose file
-        # first check if a path to a compose file is provided, if not
-        # if not alert and fetch it from the source repo
+        if compose_file is None:
+
+            if url is not None:
+                r = requests.get(url=url)
+                if r.status_code == 200:
+                    logging.debug(f"Downloaded file from {url}. Will try stating services based on this file.")
+                    compose_file_raw = r.text
+                else:
+                    logging.warning(f"Can not download file from {url}. Check provided URL or internet connection.")
+
+            elif fetch_default_compose is True:
+                # This happens if nothing is specified!
+                compose_file_raw = self.__get_default_docker_compose()
+
+            else:
+                logging.warning(f"No compose file specified. Can not run services.")
+
+            compose_file_bytes = bytes(compose_file_raw, "utf-8")
+
+            operation = subprocess.run(["docker",
+                                        "compose",
+                                        "-p",
+                                        f"{stack_name}",
+                                        "-f",
+                                        "-",
+                                        "up",
+                                        "-d"], input=compose_file_bytes)
+
+            logging.info(f"Started with downloaded docker compose file.")
+
         elif compose_file is not None:
 
             operation = subprocess.run(["docker",
@@ -665,19 +693,43 @@ class StableDraCor:
             self.__docker_compose_file = compose_file
 
             return True
-        elif url is not None:
-            logging.critical("Not implemented to start from a url. Need to supply compose file.")
-            return False
+
         else:
             logging.warning("Can not start containers. Compose file not specified.")
 
-        # TODO: list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
+    def __get_default_docker_compose(self):
+        """Helper function to get a docker compose file to run an empty stack with. This is a fallback
+        to make running a local instance easy.
+        TODO: rework this method
+        """
+        # The default URL of the compose file is hardcoded. It might be necessary to use different configurations
+        # depending on the operation system.
+        url = "https://raw.githubusercontent.com/dracor-org/stabledracor/master/configurations/compose.fullstack.empty.yml"
+
+        r = requests.get(url=url)
+        if r.status_code == 200:
+            compose_file = r.text
+            logging.info(f"Fetched default compose file (configuration) from {url}.")
+            return compose_file
+        else:
+            logging.warning(f"Could not retrieve compose file. Server returned status code {str(r.status_code)}.")
 
     def run(self,
-            compose_file: str = None):
-        """Run a stack of DraCor Services
-        TODO: this needs better documentation"""
-        self.__run_services_with_docker_compose(compose_file=compose_file)
+            compose_file: str = None,
+            url: str = None):
+        """Run a stack of DraCor Services.
+            If no compose file is provided, a compose file will be fetched from the project repository on Github.
+
+        Args:
+            compose_file (str, optional): Path to a docker compose file that defines the services
+            url (str, optional): URL of a compose file
+        """
+        if compose_file is None and url is None:
+            self.__run_services_with_docker_compose(fetch_default_compose=True)
+        elif url is not None:
+            self.__run_services_with_docker_compose(url=url)
+        elif compose_file is not None:
+            self.__run_services_with_docker_compose(compose_file=compose_file)
 
         # Try to detect running docker services
         self.__detect_docker_services()
