@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 import base64
 import subprocess
 import yaml
+from datetime import datetime
 
 
 def construct_request_url(
@@ -292,7 +293,8 @@ class StableDraCor:
                  password: str = None,
                  name: str = None,
                  description: str = None,
-                 github_access_token: str = None):
+                 github_access_token: str = None,
+                 manifest: dict = None):
         """
 
         Args:
@@ -303,11 +305,16 @@ class StableDraCor:
              description (str, optional): Description of the local instance
              github_access_token (str, optional): Github Personal Access token used to indentify
                 when sending API requests to the GitHub API. Allows for higher rate limit then anonymous requests.
+            manifest (dict, optional): Manifest describing a system with pre-loaded corpora
         """
 
         # Set a uuid
         self.id = uuid.uuid4()
         logging.debug(f"Generated ID: {self.id}.")
+
+        # Create a system from a provided manifest
+        if manifest is not None:
+            logging.warning("Creating a system from a manifest is not implemented yet.")
 
         if name is not None:
             logging.debug(f"Set name to: {name}")
@@ -363,7 +370,7 @@ class StableDraCor:
 
         # Docker services
         # Initially assume, that there are no services running, but try to locate them in the next step
-        self.services = dict(
+        self.__services = dict(
             api=None,
             frontend=None,
             metrics=None,
@@ -378,6 +385,39 @@ class StableDraCor:
 
         # docker-compose file
         self.__docker_compose_file = None
+
+        # Metadata on loaded corpora
+        self.__corpora = {}
+
+    def __prepare_system_metadata(self) -> dict:
+        """Helper funtion to prepare metadata on running system"""
+
+        metadata = dict(
+            id=str(self.id)
+        )
+
+        if self.name:
+            metadata["name"] = self.name
+
+        if self.description:
+            metadata["description"] = self.description
+
+        now = datetime.now()
+        metadata["timestamp"] = now.isoformat()
+
+        return metadata
+
+    def get_manifest(self):
+        """Get manifest of the running system"""
+
+        manifest = dict(
+            version="v1",
+            metadata=self.__prepare_system_metadata(),
+            services=self.__services,
+            corpora=self.__corpora
+            )
+
+        return manifest
 
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
@@ -528,6 +568,26 @@ class StableDraCor:
                 images.append(image)
         return images
 
+    def get_manifest_from_docker_image(self, id: str):
+        """Extract manifest from a docker image identfied by its ID
+        containing a label 'org.dracor.stable-dracor.manifest'
+
+        Args:
+            id (str): ID of the image
+        TODO: implement
+        """
+
+        operation = subprocess.run(["docker",
+                                    "inspect",
+                                    f"{id}",
+                                    "--format",
+                                    '{{ json .Config.Labels }}'
+                                    ], capture_output=True)
+
+        # This needs to evaluate the labels
+
+        return json.loads(operation.stdout.decode())
+
     def list_docker_containers(self,
                                only_running: bool = False) -> list:
         """
@@ -582,17 +642,17 @@ class StableDraCor:
             image = container[0]["Image"]
             logging.info(f"Found {expected_image} container with ID {container_id}. Image is: {image}")
 
-            if self.services[name] is None:
+            if self.__services[name] is None:
                 self.set_service(name=name, container=container_id, image=image)
             else:
-                if "container" in self.services[name]:
-                    if self.services[name]["container"] == container_id:
+                if "container" in self.__services[name]:
+                    if self.__services[name]["container"] == container_id:
                         logging.debug(f"Container {name} already registered.")
                     else:
-                        logging.warning(f"A different Docker container (ID: {self.services[name]['container']}) is"
+                        logging.warning(f"A different Docker container (ID: {self.__services[name]['container']}) is"
                                         f" already registered as service {name}.")
-                        logging.debug(f"Already registered container: {self.services[name]['container']}.")
-                        logging.debug(f"Container that should be registed now: {container_id}.")
+                        logging.debug(f"Already registered container: {self.__services[name]['container']}.")
+                        logging.debug(f"Container that should be registered now: {container_id}.")
 
         else:
             logging.warning(f"Found {len(container)} running Docker containers derived from a '{expected_image}' "
@@ -626,7 +686,7 @@ class StableDraCor:
                                                 containers=running_containers)
 
         # API/eXist could also be derived from dracor/stable-dracor:{tag} this should be also checked
-        if self.services["api"] is None:
+        if self.__services["api"] is None:
             self.__detect_single_docker_service(name="api",
                                                 expected_image="dracor/stable-dracor",
                                                 containers=running_containers)
@@ -741,11 +801,11 @@ class StableDraCor:
     def __stop_docker_stack(self):
         """Helper function to stop the whole docker stack
         docker compose -f {compose_file} stop does not work – maybe because of the containers
-        running in detached mode, therefore we stop all containers in self.services..
+        running in detached mode, therefore we stop all containers in self.__services..
         TODO: this should maybe return a status
         """
-        for key in self.services.keys():
-            container = self.services[key]["container"]
+        for key in self.__services.keys():
+            container = self.__services[key]["container"]
             self.__stop_docker_container_by_id(container)
             logging.info(f"Stopped container '{container}'.")
 
@@ -758,7 +818,7 @@ class StableDraCor:
             self.__stop_docker_container_by_id(container)
             logging.debug(f"Stopping container {container}.")
         elif service is not None and container is None:
-            container = self.services[service]["container"]
+            container = self.__services[service]["container"]
             self.__stop_docker_container_by_id(container)
             logging.info(f"Stopping service '{service}' running as container {container}.")
         else:
@@ -785,39 +845,42 @@ class StableDraCor:
         if name not in ["api", "frontend", "metrics", "triplestore"]:
             logging.warning(f"Registering a non-canonical service: {name}")
 
-        if self.services[name] is None:
-            self.services[name] = dict(container=container)
+        if self.__services[name] is None:
+            self.__services[name] = dict(container=container)
         else:
-            self.services[name]["container"] = container
+            self.__services[name]["container"] = container
 
         if image is not None:
-            self.services[name]["image"] = image
+            self.__services[name]["image"] = image
 
-        return self.services[name]
+        return self.__services[name]
+
 
     def __create_docker_image_labels(self):
-        """Helper Function to create Docker Labels to append when committing an image
+        """
+        Helper Function to create Docker Labels to append when committing an image
         Creates a string that can be used in the docker commit command with the option -c or --change, e.g.
-         LABEL multi.label1="value1" multi.label2="value2" other="value3"
+        LABEL multi.label1="value1" multi.label2="value2" other="value3"
+
+        TODO: Manifest must be translated to the labels and must find a way of translate the labels back to manifest
         """
 
-        label_data = {
-            "org.dracor.stable-dracor.id": self.id
-        }
+        manifest = self.get_manifest()
 
-        if self.name is not None:
-            label_data["org.dracor.stable-dracor.name"] = self.name
+        label_data = {}
 
-        if self.description is not None:
-            label_data["org.dracor.stable-dracor.description"] = self.description
+        label_data["org.dracor.stable-dracor.id"] = manifest["metadata"]["id"]
 
         # org.dracor.stable-dracor.service-images:
         # contains the information about the images used for the DraCor microservices when creating the container
+        # this is deprecated b/c hard to extract
+        """
         service_images = {}
-        for key in self.services.keys():
-            service_images[key] = self.services[key]["image"]
+        for key in self.__services.keys():
+            service_images[key] = self.__services[key]["image"]
 
         label_data["org.dracor.stable-dracor.service-images"] = json.dumps(service_images, separators=(',', ':'))
+        """
 
         labels = []
 
@@ -840,7 +903,7 @@ class StableDraCor:
 
         Args:
             service (str, optional): Name of the service to create an image of. Defaults to "api", but could be
-                any of self.services.
+                any of self.__services.
             image_namespace (str, optional): Namespace the docker image will be added to. Defaults to "dracor".
             image_name (str, optional): Name of the image. Defaults to "stable-dracor"
             image_tag (str, optional): Tag of the image. This must be supplied if using dracor/stable-dracor.
@@ -849,7 +912,7 @@ class StableDraCor:
             update_services (bool, optional): Replace the image in services with the newly created image.
                 Defaults to True.
         """
-        service_info = self.services[service]
+        service_info = self.__services[service]
         logging.debug(f"Creating image of service '{service}'.")
 
         container_id = service_info["container"]
@@ -902,7 +965,7 @@ class StableDraCor:
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
 
         if update_services is True:
-            self.services[service]["image"] = new_image
+            self.__services[service]["image"] = new_image
             logging.debug(f"Updated services. Image {new_image} is set as service '{service}'.")
 
     def publish_docker_image(self,
@@ -945,15 +1008,15 @@ class StableDraCor:
             filename (str, optional): Overwrite the filename. Default will include self.name if available, else
                 self.id.
 
-        TODO: There is a lot of things hardcoded.. Better integrate self.services and the compose file
+        TODO: There is a lot of things hardcoded.. Better integrate self.__services and the compose file
         """
         compose_file = dict(
             services={}
         )
 
-        for key in self.services.keys():
+        for key in self.__services.keys():
             compose_file["services"][key] = {}
-            compose_file["services"][key]["image"] = self.services[key]["image"]
+            compose_file["services"][key]["image"] = self.__services[key]["image"]
 
             # This is currently hardcoded, maybe this should fetch these parts from the running system?
 
@@ -1635,6 +1698,27 @@ class StableDraCor:
 
             return filenames
 
+    def __exclude_id_from_corpus_manifest(self,
+                                            id: str = None,
+                                            id_type: str = "slug",
+                                            corpus_manifest: dict = None,
+                                            ):
+        """Helper function to remove an element from a corpus manifest"""
+        if "exclude" in corpus_manifest:
+            if "ids" in corpus_manifest["exclude"]:
+
+                assert corpus_manifest["exclude"]["type"] == id_type, f"Conflict in excluding plays. ID must be of type" \
+                                                                      f" {corpus_manifest['exclude']['type']}"
+                corpus_manifest["exclude"]["ids"].append(id)
+            else:
+                corpus_manifest["exclude"]["type"] = id_type
+                corpus_manifest["exclude"]["ids"] = [id]
+        else:
+            corpus_manifest["exclude"] = {"type":id_type, "ids": [id]}
+
+        return corpus_manifest
+
+
     def add_corpus_from_repo(self,
                              commit: str = None,
                              repository_name: str = None,
@@ -1667,6 +1751,10 @@ class StableDraCor:
             logging.debug("No commit set. Getting latest commit.")
             commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
                                                                   repository_owner=repository_owner)
+        corpus_manifest = dict(
+            repository=f"https://{repository_base_url}/{repository_owner}/{repository_name}",
+            commit=commit
+        )
 
         if use_metadata_of_corpus_xml is True:
             logging.debug(f"Get the repository root folder tree at commit '{commit}'.")
@@ -1771,6 +1859,9 @@ class StableDraCor:
 
         create_corpus_status = self.add_corpus(corpus_metadata=new_corpusmetadata, check=False)
 
+        # meanwhile the name should be set, add to manifest
+        corpus_manifest["corpusname"] = new_corpusmetadata["name"]
+
         filenames = self.list_plays_in_repo(commit=commit,
                                             repository_owner=repository_owner,
                                             repository_name=repository_name,
@@ -1784,10 +1875,19 @@ class StableDraCor:
         if exclude is None:
             logging.debug("No plays are to be excluded.")
             exclude = []
+        else:
+            logging.debug(f"Should exclude {', '.join(exclude)}.")
 
         for filename in filenames:
-            if filename in exclude or f"{filename}.xml" in exclude:
+            if filename in exclude or f"{filename}.xml" in exclude or filename.replace(".xml", "") in exclude:
                 logging.debug(f"File {filename} is excluded.")
+                if filename.endswith(".xml"):
+                    slug = filename[:-4]
+                else:
+                    slug = filename
+
+                corpus_manifest = self.__exclude_id_from_corpus_manifest(id=slug, id_type="slug",
+                                                                         corpus_manifest=corpus_manifest)
                 pass
             else:
                 add_file_status = self.add_play_version_to_corpus(
@@ -1800,6 +1900,15 @@ class StableDraCor:
                     success.append(filename)
                 else:
                     errors.append(filename)
+                    if filename.endswith(".xml"):
+                        slug = filename[:-4]
+                    else:
+                        slug = filename
+
+                    corpus_manifest = self.__exclude_id_from_corpus_manifest(id=slug, id_type="slug",
+                                                                             corpus_manifest=corpus_manifest)
+
+        self.__corpora[corpus_manifest["corpusname"]] = corpus_manifest
 
         if len(errors) == 0:
             logging.info(f"Successfully added all {len(success)} files to {new_corpusmetadata['name']}.")
@@ -1807,6 +1916,7 @@ class StableDraCor:
         else:
             logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {new_corpusmetadata['name']}."
                             f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
+
             return False
 
     def list_dracor_github_repos(self):
