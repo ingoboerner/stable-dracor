@@ -412,10 +412,20 @@ class StableDraCor:
 
         manifest = dict(
             version="v1",
-            metadata=self.__prepare_system_metadata(),
+            system=self.__prepare_system_metadata(),
             services=self.__services,
             corpora=self.__corpora
             )
+
+        # Add additional information to the api service
+        api_info = self.get_api_info()
+        if "version" in api_info:
+            if "api" in self.__services:
+                manifest["services"]["api"]["version"] = api_info["version"]
+
+        if "existdb" in api_info:
+            if "api" in self.__services:
+                manifest["services"]["api"]["existdb"] = api_info["existdb"]
 
         return manifest
 
@@ -568,13 +578,14 @@ class StableDraCor:
                 images.append(image)
         return images
 
-    def get_manifest_from_docker_image(self, id: str):
-        """Extract manifest from a docker image identfied by its ID
-        containing a label 'org.dracor.stable-dracor.manifest'
+    def get_labels_from_docker_image(self, id: str) -> dict:
+        """Extract labels from a docker image identified by its image ID
 
         Args:
             id (str): ID of the image
-        TODO: implement
+
+        Returns:
+            dict: Docker image labels
         """
 
         operation = subprocess.run(["docker",
@@ -584,9 +595,12 @@ class StableDraCor:
                                     '{{ json .Config.Labels }}'
                                     ], capture_output=True)
 
-        # This needs to evaluate the labels
-
         return json.loads(operation.stdout.decode())
+
+    def __docker_labels_to_manifest(self, labels:dict):
+        """Helper Function to convert labels (org.dracor.stable-dracor) of a docker image to a manifest
+        TODO: implement
+        """
 
     def list_docker_containers(self,
                                only_running: bool = False) -> list:
@@ -855,12 +869,20 @@ class StableDraCor:
 
         return self.__services[name]
 
-
-    def __create_docker_image_labels(self):
+    def __create_docker_image_labels(self,
+                                     service: str = "api",
+                                     this_image: str = None,
+                                     base_image: str = None):
         """
         Helper Function to create Docker Labels to append when committing an image
         Creates a string that can be used in the docker commit command with the option -c or --change, e.g.
         LABEL multi.label1="value1" multi.label2="value2" other="value3"
+
+        Args:
+            service (str, optional): Name of the service for which the image the labels are created for.
+                Defaults to "api"
+            this_image (str, optional): "New" image that the labels are created for
+            base_image (str, optional): Image that the new image is based on (normally a canonical dracor-api image)
 
         TODO: Manifest must be translated to the labels and must find a way of translate the labels back to manifest
         """
@@ -869,18 +891,74 @@ class StableDraCor:
 
         label_data = {}
 
-        label_data["org.dracor.stable-dracor.id"] = manifest["metadata"]["id"]
+        label_data["org.dracor.stable-dracor.system.id"] = manifest["system"]["id"]
 
-        # org.dracor.stable-dracor.service-images:
-        # contains the information about the images used for the DraCor microservices when creating the container
-        # this is deprecated b/c hard to extract
-        """
-        service_images = {}
-        for key in self.__services.keys():
-            service_images[key] = self.__services[key]["image"]
+        if "name" in manifest["system"]:
+            label_data["org.dracor.stable-dracor.system.name"] = manifest["system"]["name"]
 
-        label_data["org.dracor.stable-dracor.service-images"] = json.dumps(service_images, separators=(',', ':'))
-        """
+        if "description" in manifest["system"]:
+            label_data["org.dracor.stable-dracor.system.description"] = manifest["system"]["description"]
+
+        if "timestamp" in manifest["system"]:
+            label_data["org.dracor.stable-dracor.system.timestamp"] = manifest["system"]["timestamp"]
+
+        corpusnames = list(manifest["corpora"].keys())
+        if len(corpusnames) > 0:
+            label_data["org.dracor.stable-dracor.corpora"] = ",".join(corpusnames)
+
+        for corpus_key in corpusnames:
+            if "commit" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.commit"
+                label_data[label_key] = manifest["corpora"][corpus_key]["commit"]
+            if "repository" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.repository"
+                label_data[label_key] = manifest["corpora"][corpus_key]["repository"]
+            if "exclude" in manifest["corpora"][corpus_key]:
+                if "type" in manifest["corpora"][corpus_key]["exclude"]:
+                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.exclude.type"
+                    label_data[label_key] = manifest["corpora"][corpus_key]["exclude"]["type"]
+                if "ids" in manifest["corpora"][corpus_key]["exclude"]:
+                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.exclude.ids"
+                    label_data[label_key] = ",".join(manifest["corpora"][corpus_key]["exclude"]["ids"])
+            if "include" in manifest["corpora"][corpus_key]:
+                if "type" in manifest["corpora"][corpus_key]["include"]:
+                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.include.type"
+                    label_data[label_key] = manifest["corpora"][corpus_key]["include"]["type"]
+                if "ids" in manifest["corpora"][corpus_key]["include"]:
+                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.include.ids"
+                    label_data[label_key] = ",".join(manifest["corpora"][corpus_key]["include"]["ids"])
+
+        service_names = []
+        for service_key in manifest["services"].keys():
+            if service_key == service:
+                service_names.append(service)
+                if base_image is not None:
+                    label_key = f"org.dracor.stable-dracor.services.{service_key}.base-image"
+                    label_data[label_key] = base_image
+                if this_image is not None:
+                    label_key = f"org.dracor.stable-dracor.services.{service_key}.image"
+                    label_data[label_key] = this_image
+
+            else:
+                if manifest["services"][service_key] is not None:
+                    service_names.append(service_key)
+                    if "image" in manifest["services"][service_key]:
+                        label_key = f"org.dracor.stable-dracor.services.{service_key}.image"
+                        label_data[label_key] = manifest["services"][service_key]["image"]
+
+        # Add additional info if committing API container
+        if service == "api":
+            if "api" in manifest["services"]:
+                if "existdb" in manifest["services"]["api"]:
+                    label_key = f"org.dracor.stable-dracor.services.api.existdb"
+                    label_data[label_key] = manifest["services"]["api"]["existdb"]
+                if "version" in manifest["services"]["api"]:
+                    label_key = f"org.dracor.stable-dracor.services.api.version"
+                    label_data[label_key] = manifest["services"]["api"]["version"]
+
+        if len(service_names) > 0:
+            # somehow json dumps does not work: tested json.dumps(service_names, separators=(',', ':'))
+            label_data["org.dracor.stable-dracor.services"] = ",".join(service_names)
 
         labels = []
 
@@ -937,6 +1015,11 @@ class StableDraCor:
 
         # TODO: Must test with Capek thing if it causes problems when committing a running container
 
+        if "image" in self.__services[service]:
+            old_image = self.__services[service]["image"]
+        else:
+            old_image = None
+
         if image_tag is None:
             image_tag = self.id
 
@@ -945,7 +1028,9 @@ class StableDraCor:
         if commit_message is None:
             commit_message = "Create image with StableDraCor client"
 
-        labels = self.__create_docker_image_labels()
+        labels = self.__create_docker_image_labels(service=service,
+                                                   base_image=old_image,
+                                                   this_image=new_image)
 
         commit_operation = subprocess.run([
             "docker",
@@ -1082,11 +1167,10 @@ class StableDraCor:
             yaml.dump(compose_file, f)
             logging.info(f"Stored configuration (docker-compose file) as {file_name}.")
 
-    def load_info(self):
+    def get_api_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
-        This information could be appended as docker labels when committing a running container.
-        TODO: implement"""
-        raise Exception("Not implemented.")
+        """
+        return self.__api_get()
 
     def __corpus_exists(self, corpusname: str) -> bool:
         """Helper function to check if a corpus exists.
