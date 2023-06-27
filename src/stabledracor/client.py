@@ -309,8 +309,8 @@ class StableDraCor:
         """
 
         # Set a uuid
-        self.id = uuid.uuid4()
-        logging.debug(f"Generated ID: {self.id}.")
+        self.__id = uuid.uuid4()
+        logging.debug(f"Generated ID: {self.__id}.")
 
         # Create a system from a provided manifest
         if manifest is not None:
@@ -318,21 +318,21 @@ class StableDraCor:
 
         if name is not None:
             logging.debug(f"Set name to: {name}")
-            self.name = name
+            self.__name = name
         else:
-            self.name = None
+            self.__name = None
 
         if description is not None:
             logging.debug(f"Set description to: {name}")
-            self.description = description
+            self.__description = description
         else:
-            self.description = None
+            self.__description = None
 
         if api_base_url is not None:
             logging.debug(f"Update api_base_url with: {api_base_url}")
-            self.api_base_url = api_base_url
+            self.__api_base_url = api_base_url
         else:
-            self.api_base_url = "http://localhost:8088/api/"
+            self.__api_base_url = "http://localhost:8088/api/"
 
         if username is not None:
             logging.debug(f"Update username with: {api_base_url}")
@@ -348,12 +348,12 @@ class StableDraCor:
             logging.debug("Using default password: ''.")
             self.__password = ""
 
-        logging.info(f"Initialized new StableDraCor instance: '{self.name}' (ID: {self.id}).")
+        logging.info(f"Initialized new StableDraCor instance: '{self.__name}' (ID: {self.__id}).")
 
         if self.__test_api_connection() is True:
-            logging.info(f"Local DraCor API is available at {self.api_base_url}.")
+            logging.info(f"Local DraCor API is available at {self.__api_base_url}.")
         else:
-            logging.warning(f"Local DraCor API is not available at {self.api_base_url}.")
+            logging.warning(f"Local DraCor API is not available at {self.__api_base_url}.")
 
         if github_access_token is not None:
             self.__github_access_token = github_access_token
@@ -393,14 +393,14 @@ class StableDraCor:
         """Helper funtion to prepare metadata on running system"""
 
         metadata = dict(
-            id=str(self.id)
+            id=str(self.__id)
         )
 
-        if self.name:
-            metadata["name"] = self.name
+        if self.__name:
+            metadata["name"] = self.__name
 
-        if self.description:
-            metadata["description"] = self.description
+        if self.__description:
+            metadata["description"] = self.__description
 
         now = datetime.now()
         metadata["timestamp"] = now.isoformat()
@@ -432,7 +432,7 @@ class StableDraCor:
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
         with the URL of the local instance"""
-        return api_get(api_base_url=self.api_base_url, **kwargs)
+        return api_get(api_base_url=self.__api_base_url, **kwargs)
 
     def __api_post(self, data, **kwargs):
         """Send POST request to running local instance. Uses the function api_post, but overrides api_base_url
@@ -444,7 +444,7 @@ class StableDraCor:
         """
 
         logging.debug(kwargs)
-        return api_post(data, api_base_url=self.api_base_url, **kwargs)
+        return api_post(data, api_base_url=self.__api_base_url, **kwargs)
 
     def __api_put(self, data, **kwargs):
         """Send PUT request to running local instance. Uses the function api_put, but overrides api_base_url
@@ -454,14 +454,14 @@ class StableDraCor:
             data: Payload to include in body
         """
         logging.debug(kwargs)
-        return api_put(data, api_base_url=self.api_base_url, **kwargs)
+        return api_put(data, api_base_url=self.__api_base_url, **kwargs)
 
     def __api_delete(self, **kwargs):
         """Send DELETE request to running local instance. Uses the function api_delete, but overrides api_base_url
         with the URL of the local instance
         """
         logging.debug(kwargs)
-        return api_delete(api_base_url=self.api_base_url, **kwargs)
+        return api_delete(api_base_url=self.__api_base_url, **kwargs)
 
     def __test_api_connection(self):
         """Test if local DraCor API is available."""
@@ -718,8 +718,8 @@ class StableDraCor:
             fetch_default_compose (bool, optional): Flag to trigger fetching default docker compose file from GitHub.
                 Defaults to False
         """
-        if self.name:
-            stack_name = self.name
+        if self.__name:
+            stack_name = self.__name
         else:
             stack_name = "stable-dracor"
 
@@ -1021,7 +1021,7 @@ class StableDraCor:
             old_image = None
 
         if image_tag is None:
-            image_tag = self.id
+            image_tag = self.__id
 
         new_image = f"{image_namespace}/{image_name}:{image_tag}"
 
@@ -1090,8 +1090,8 @@ class StableDraCor:
         """Write the current configuration as a compose file
 
         Args:
-            filename (str, optional): Overwrite the filename. Default will include self.name if available, else
-                self.id.
+            filename (str, optional): Overwrite the filename. Default will include self.__name if available, else
+                self.__id.
 
         TODO: There is a lot of things hardcoded.. Better integrate self.__services and the compose file
         """
@@ -1150,16 +1150,16 @@ class StableDraCor:
                     "3030:3030"
                 ]
 
-        if self.name is not None:
-            title = f"# Stable DraCor System '{self.name}'"
+        if self.__name is not None:
+            title = f"# Stable DraCor System '{self.__name}'"
         else:
             title = "# Stable DraCor System"
 
         if file_name is None:
-            if self.name is not None:
-                file_name = f"compose.{self.name}.yml"
+            if self.__name is not None:
+                file_name = f"compose.{self.__name}.yml"
             else:
-                file_name = f"compose.{self.id}.yml"
+                file_name = f"compose.{self.__id}.yml"
 
         with open(file_name, "w") as f:
             f.write(title)
