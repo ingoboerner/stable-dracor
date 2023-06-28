@@ -427,6 +427,21 @@ class StableDraCor:
             if "api" in self.__services:
                 manifest["services"]["api"]["existdb"] = api_info["existdb"]
 
+        # add number of plays to corpora
+        try:
+            corpora_metrics = self.__get_corpora_metrics_for_manifest()
+        except:
+            logging.debug("Retrieving metrics of corpora failed.")
+            corpora_metrics = dict()
+
+        logging.debug(corpora_metrics)
+
+        for corpus_metrics_key in corpora_metrics.keys():
+            if corpus_metrics_key in manifest["corpora"]:
+                corpus_metrics = corpora_metrics[corpus_metrics_key]
+                if "num_of_plays" in corpus_metrics:
+                    manifest["corpora"][corpus_metrics_key]["num_of_plays"] = corpus_metrics["num_of_plays"]
+
         return manifest
 
     def __api_get(self, **kwargs):
@@ -869,6 +884,26 @@ class StableDraCor:
 
         return self.__services[name]
 
+    def __get_corpora_metrics_for_manifest(self) -> dict:
+        """Helper Function to extract some data from the corpus metrics to be included in the manifest
+        Currently, only the number of plays "num_of_plays" is included
+        """
+        corpora = self.__api_get(method="corpora?include=metrics")
+        logging.debug("Retrieved corpus metrics")
+        logging.debug(corpora)
+
+        metrics = dict()
+
+        for item in corpora:
+            corpus = dict()
+            if "metrics" in item:
+                if "plays" in item["metrics"]:
+                    corpus["num_of_plays"] = item["metrics"]["plays"]
+                # only if it has metrics
+                metrics[item["name"]] = corpus
+
+        return metrics
+
     def __create_docker_image_labels(self,
                                      service: str = "api",
                                      this_image: str = None,
@@ -907,12 +942,21 @@ class StableDraCor:
             label_data["org.dracor.stable-dracor.corpora"] = ",".join(corpusnames)
 
         for corpus_key in corpusnames:
+            if "source_type" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.source-type"
+                label_data[label_key] = manifest["corpora"][corpus_key]["source_type"]
+            if "url" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.url"
+                label_data[label_key] = manifest["corpora"][corpus_key]["url"]
             if "commit" in manifest["corpora"][corpus_key]:
                 label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.commit"
                 label_data[label_key] = manifest["corpora"][corpus_key]["commit"]
-            if "repository" in manifest["corpora"][corpus_key]:
-                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.repository"
-                label_data[label_key] = manifest["corpora"][corpus_key]["repository"]
+            if "timestamp" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.timestamp"
+                label_data[label_key] = manifest["corpora"][corpus_key]["timestamp"]
+            if "num_of_plays" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays"
+                label_data[label_key] = manifest["corpora"][corpus_key]["num_of_plays"]
             if "exclude" in manifest["corpora"][corpus_key]:
                 if "type" in manifest["corpora"][corpus_key]["exclude"]:
                     label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.exclude.type"
@@ -1369,6 +1413,15 @@ class StableDraCor:
         if corpus_add_status is False:
             logging.warning(f"Copying corpus {source_corpusname} failed.")
             return False
+        else:
+            # add to manifest
+            if new_corpus_metadata['name'] not in self.__corpora:
+                self.__corpora[new_corpus_metadata['name']] = dict(
+                    source_type="api",
+                    url=f"{source_api_url}corpora/{source_corpusname}",
+                    timestamp=datetime.now().isoformat(),
+                    corpusname=new_corpus_metadata['name']
+                )
 
         if copy_contents:
             self.copy_corpus_contents(
@@ -1836,8 +1889,9 @@ class StableDraCor:
             commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
                                                                   repository_owner=repository_owner)
         corpus_manifest = dict(
-            repository=f"https://{repository_base_url}/{repository_owner}/{repository_name}",
-            commit=commit
+            source_type="repository",
+            commit=commit,
+            url=f"https://{repository_base_url}/{repository_owner}/{repository_name}"
         )
 
         if use_metadata_of_corpus_xml is True:
