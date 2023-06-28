@@ -440,7 +440,7 @@ class StableDraCor:
             if corpus_metrics_key in manifest["corpora"]:
                 corpus_metrics = corpora_metrics[corpus_metrics_key]
                 if "num_of_plays" in corpus_metrics:
-                    manifest["corpora"][corpus_metrics_key]["num_of_plays"] = corpus_metrics["num_of_plays"]
+                    manifest["corpora"][corpus_metrics_key]["num_of_plays"] = int(corpus_metrics["num_of_plays"])
 
         return manifest
 
@@ -956,7 +956,7 @@ class StableDraCor:
                 label_data[label_key] = manifest["corpora"][corpus_key]["timestamp"]
             if "num_of_plays" in manifest["corpora"][corpus_key]:
                 label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays"
-                label_data[label_key] = manifest["corpora"][corpus_key]["num_of_plays"]
+                label_data[label_key] = str(manifest["corpora"][corpus_key]["num_of_plays"])
             if "exclude" in manifest["corpora"][corpus_key]:
                 if "type" in manifest["corpora"][corpus_key]["exclude"]:
                     label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.exclude.type"
@@ -1328,16 +1328,24 @@ class StableDraCor:
         logging.debug(f"Retrieved metadata of {str(len(source_plays))} plays from source.")
 
         errors = []
+        success = []
 
         # Plays to exclude
         if exclude is not None:
             exclude = exclude
         else:
             exclude = []
+            # there are plays excluded, need to record that in the self.__corpora
 
         for play in source_plays:
             if play["name"] in exclude:
                 logging.debug(f"Play {play['name']} is excluded.")
+
+                # register this in self.__corpora in the source
+                self.__exclude_play_from_corpus_source(corpusname=target_corpusname,
+                                                       source_name=source_corpusname,
+                                                       id_type="slug",
+                                                       id=play["name"])
             else:
 
                 try:
@@ -1359,14 +1367,98 @@ class StableDraCor:
                             password=self.__password,
                             headers={"Content-Type": "application/xml"})
 
+                    success.append(play['name'])
+
                 except:
                     logging.warning(f"Could not add  {play['name']} to corpus f{target_corpusname}.")
                     errors.append(play["name"])
 
-        logging.info(f"Added contents of corpus {source_corpusname} from {source_api_url}.")
+        logging.info(f"Added contents of corpus {source_corpusname} from {source_api_url}. "
+                     f"{len(success)} plays were added.")
+
+        # log the number of plays successfully added to the source
+        self.__register_added_play_number_in_corpus_source(corpusname=target_corpusname,
+                                                           source_name=source_corpusname,
+                                                           num_of_plays=len(success))
+
         if exclude:
             logging.debug(f"Number of plays excluded: {len(exclude)}.")
+
         logging.debug(f"There were {len(errors)} Errors.")
+
+    def __register_corpus(self,
+                                corpusname: str = None,
+                                source_name: str = None,
+                                source_corpusname: str = None,
+                                source_commit: str = None,
+                                source_type: str = None,
+                                source_url: str = None):
+        """Helper Function to register a(n) (added) corpus in self.__corpora
+
+        Keyword Args:
+            corpusname (str): Identifier "corpusname" of the new corpus
+            source_name (str, optional): Name of the source. Defaults to the value of source_corpusname.
+            source_corpusname: (str, optional): Identifier "corpusname" of the source corpus
+            source_commit (str, optional): Commit representing the state of a corpus added from GitHub
+            source_type (str, optional): Type of the source.
+                Typical values "api", "repository", "drive" (hard disk, local folder)
+            source_url (str, optional): URL of the source
+        """
+
+        if corpusname in self.__corpora:
+            logging.debug(f"Corpus {corpusname} already registered in self.__corpora. "
+                          f"No additional source has been added.")
+            # TODO: decide if source will be added
+        else:
+            logging.debug(f"Registering corpus {corpusname} in self.__corpora.")
+            self.__corpora[corpusname] = dict(
+                corpusname=corpusname,
+                timestamp=datetime.now().isoformat()
+            )
+            if source_name is not None or source_corpusname is not None:
+
+                self.__corpora[corpusname]["sources"] = dict()
+
+                source = dict()
+
+                if source_type is not None:
+                    source["type"] = source_type
+                if source_corpusname is not None:
+                    source["corpusname"] = source_corpusname
+                if source_url is not None:
+                    source["url"] = source_url
+                if source_commit is not None:
+                    source["commit"] = source_commit
+                source["timestamp"] = datetime.now().isoformat()
+
+                # is a source name is provided use this to identify the source,
+                # otherwise use the source corpus name
+                if source_name is not None:
+                    self.__corpora[corpusname]["sources"][source_name] = source
+                else:
+                    self.__corpora[corpusname]["sources"][source_corpusname] = source
+            else:
+                logging.debug(f"No source provided for corpus {corpusname}.")
+
+    def __register_added_play_number_in_corpus_source(self,
+                                                      corpusname:str = None,
+                                                      source_name: str = None,
+                                                      num_of_plays: int = None):
+        """Helper function to add a play count to a source of a corpus in self.__corpora
+
+        Returns:
+
+        """
+        """
+        __register_added_play_number_in_corpus_source(corpusname=target_corpusname,
+                                                   source_name=source_corpusname,
+                                                  num_of_plays=len(success))
+        """
+        assert corpusname in self.__corpora, f"No such corpus '{corpusname}' registered in self.__corpora."
+        assert source_name in self.__corpora[corpusname]["sources"], f"Source {source_name} is not registered with " \
+                                                                     f" corpus {corpusname} in self.__corpora."
+
+        self.__corpora[corpusname]["sources"][source_name]["num_of_plays"] = num_of_plays
 
     def copy_corpus(self,
                     source_api_url: str = None,
@@ -1414,14 +1506,12 @@ class StableDraCor:
             logging.warning(f"Copying corpus {source_corpusname} failed.")
             return False
         else:
-            # add to manifest
-            if new_corpus_metadata['name'] not in self.__corpora:
-                self.__corpora[new_corpus_metadata['name']] = dict(
-                    source_type="api",
-                    url=f"{source_api_url}corpora/{source_corpusname}",
-                    timestamp=datetime.now().isoformat(),
-                    corpusname=new_corpus_metadata['name']
-                )
+            # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
+            self.__register_corpus(corpusname=new_corpus_metadata['name'],
+                                   source_name=source_corpusname,
+                                   source_corpusname=source_corpusname,
+                                   source_type="api",
+                                   source_url=f"{source_api_url}corpora/{source_corpusname}")
 
         if copy_contents:
             self.copy_corpus_contents(
@@ -1429,6 +1519,7 @@ class StableDraCor:
                 source_corpusname=source_corpusname,
                 target_corpusname=new_corpus_metadata["name"],
                 exclude=exclude)
+                # Handling the excludes will be done with the copy_corpus_contents method
 
         if check is True:
             logging.debug(f"Checking if corpus {new_corpus_metadata['name']} is available.")
@@ -1480,7 +1571,9 @@ class StableDraCor:
                                           password=self.__password)
         if delete_status == 200:
             logging.info(f"Removed corpus {corpusname}.")
+            # TODO: this should be reflected in self.__corpora
             return True
+
         if delete_status == 404:
             logging.warning(f"Could not remove corpus {corpusname}. No such corpus.")
             return False
@@ -1505,6 +1598,7 @@ class StableDraCor:
         remove_status = self.__api_delete(corpusname=corpusname, playname=playname)
         if remove_status == 200:
             logging.info(f"Removed play {playname} from corpus {corpusname}.")
+            # TODO: this should be reflected in self.__corpora
             return True
         if remove_status == 404:
             logging.warning(f"No such play {playname} in {corpusname}.")
@@ -1840,7 +1934,9 @@ class StableDraCor:
                                             id_type: str = "slug",
                                             corpus_manifest: dict = None,
                                             ):
-        """Helper function to remove an element from a corpus manifest"""
+        """DEPRECATED: Helper function to remove an element from a corpus manifest
+        # TODO: this method might be a candidate to deprecate
+        """
         if "exclude" in corpus_manifest:
             if "ids" in corpus_manifest["exclude"]:
 
@@ -1855,6 +1951,57 @@ class StableDraCor:
 
         return corpus_manifest
 
+    def __exclude_play_from_corpus_source(self,
+                                          id: str = None,
+                                          corpusname: str = None,
+                                          source_name: str = None,
+                                          id_type: str = "slug",
+                                          ):
+        """Helper function to exclude a play from a source of a corpus in self.__corpora
+
+        Keyword Args:
+            id (str): Identifier of the play, normally a slug. But type is set with "id_type".
+            corpusname (str): Identifier "corpusname" that has a source of which the play was excluded
+            source_name (str): Name of the source of the corpus ins self.__corpora
+            id_type (str): Type of ID. Defaults to "slug", but can be "id" if it is a DraCor ID, e.g. "ger12345"
+                Using anything else than slug is currently not recommended.
+        TODO: this would need to be refactored. There is a really deeply nested if/else structure.
+        """
+
+        assert corpusname in self.__corpora, f"Identifier corpusname {corpusname} is not registered in self.__corpora"
+
+        if "sources" in self.__corpora[corpusname]:
+            if source_name in self.__corpora[corpusname]["sources"]:
+                if "exclude" in self.__corpora[corpusname]["sources"][source_name]:
+                    # check if excluding of same ID type
+                    if "type" in self.__corpora[corpusname]["sources"][source_name]["exclude"]:
+                        # check if excluding the same type
+                        if self.__corpora[corpusname]["sources"][source_name]["exclude"]["type"] != id_type:
+                            # TODO: decide if raise Exception here because this is bad.
+                            logging.warning("Using different ID types to identify plays to exclude. This will "
+                                            "cause problems!")
+                        else:
+                            # all fine, check if IDs already have been excluded
+                            if "ids" in self.__corpora[corpusname]["sources"][source_name]["exclude"]:
+                                self.__corpora[corpusname]["sources"][source_name]["exclude"]["ids"].append(id)
+                            else:
+                                logging.debug("Strangely everything is set, but no IDs are listed to be excluded.")
+                                self.__corpora[corpusname]["sources"][source_name]["exclude"]["ids"] = [id]
+                    else:
+                        logging.warning("There might be something excluded before but the type of ID has not been set.")
+                        self.__corpora[corpusname]["sources"][source_name]["exclude"]["type"] = id_type
+                else:
+                    # need to add exclude dictionary and the substructures because it is the first time a play
+                    # is excluded from this source
+                    self.__corpora[corpusname]["sources"][source_name]["exclude"] = dict()
+                    self.__corpora[corpusname]["sources"][source_name]["exclude"]["type"] = id_type
+                    self.__corpora[corpusname]["sources"][source_name]["exclude"]["ids"] = [id]
+            else:
+                logging.warning(f"Source with name '{source_name}' is not registered with the sources of the corpus "
+                                f"{corpusname}.")
+
+        else:
+            logging.warning("Strangely there are not sources registered in the corpus.")
 
     def add_corpus_from_repo(self,
                              commit: str = None,
@@ -1888,11 +2035,6 @@ class StableDraCor:
             logging.debug("No commit set. Getting latest commit.")
             commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
                                                                   repository_owner=repository_owner)
-        corpus_manifest = dict(
-            source_type="repository",
-            commit=commit,
-            url=f"https://{repository_base_url}/{repository_owner}/{repository_name}"
-        )
 
         if use_metadata_of_corpus_xml is True:
             logging.debug(f"Get the repository root folder tree at commit '{commit}'.")
@@ -1996,9 +2138,26 @@ class StableDraCor:
             new_corpusmetadata["name"] = repository_name
 
         create_corpus_status = self.add_corpus(corpus_metadata=new_corpusmetadata, check=False)
+        if create_corpus_status is True:
+            # register the corpus self.__register_corpus()
+            # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
+            # self.add_corpus doesn't do the registering; therefore we do it here
+            if "name" in existing_corpus_metadata:
+                source_corpusname = existing_corpus_metadata["name"]
+                source_name = source_corpusname
+            else:
+                logging.debug(f"There is no corpusname availabele for the source. Use the name of the repository "
+                              f"'{repository_name}' as name of the source. This probably happend because corpus.xml "
+                              f" could not be found and might cause further problems.")
+                source_name = repository_name
+                source_corpusname = None
 
-        # meanwhile the name should be set, add to manifest
-        corpus_manifest["corpusname"] = new_corpusmetadata["name"]
+            self.__register_corpus(corpusname=new_corpusmetadata["name"],
+                                   source_corpusname=source_corpusname,
+                                   source_name=source_name,
+                                   source_type="repository",
+                                   source_commit=commit,
+                                   source_url=f"https://{repository_base_url}/{repository_owner}/{repository_name}")
 
         filenames = self.list_plays_in_repo(commit=commit,
                                             repository_owner=repository_owner,
@@ -2024,10 +2183,14 @@ class StableDraCor:
                 else:
                     slug = filename
 
-                corpus_manifest = self.__exclude_id_from_corpus_manifest(id=slug, id_type="slug",
-                                                                         corpus_manifest=corpus_manifest)
+                # Exclude the file also from the source in self.__corpora
+                self.__exclude_play_from_corpus_source(corpusname=new_corpusmetadata["name"],
+                                                       source_name=source_name,
+                                                       id_type="slug",
+                                                       id=slug)
                 pass
             else:
+                # This is what normally happens if a file is not explicitly excluded
                 add_file_status = self.add_play_version_to_corpus(
                     corpusname=new_corpusmetadata["name"],
                     commit=commit,
@@ -2037,19 +2200,28 @@ class StableDraCor:
                 if add_file_status is True:
                     success.append(filename)
                 else:
+                    # There was an error with the file, need to exclude them in self.__corpora as well
                     errors.append(filename)
                     if filename.endswith(".xml"):
                         slug = filename[:-4]
                     else:
                         slug = filename
 
-                    corpus_manifest = self.__exclude_id_from_corpus_manifest(id=slug, id_type="slug",
-                                                                             corpus_manifest=corpus_manifest)
+                    # Exclude the file also from the source in self.__corpora
+                    self.__exclude_play_from_corpus_source(corpusname=new_corpusmetadata["name"],
+                                                           source_name=source_name,
+                                                           id_type="slug",
+                                                           id=slug)
 
-        self.__corpora[corpus_manifest["corpusname"]] = corpus_manifest
+        # TODO: this might log a count to self.__corpora source; should use len(success)
+        # TODO: should log the number of plays successfully added to the source
+        self.__register_added_play_number_in_corpus_source(corpusname=new_corpusmetadata["name"],
+                                                           source_name=source_name,
+                                                           num_of_plays=len(success))
 
         if len(errors) == 0:
             logging.info(f"Successfully added all {len(success)} files to {new_corpusmetadata['name']}.")
+
             return True
         else:
             logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {new_corpusmetadata['name']}."
