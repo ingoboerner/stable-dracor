@@ -12,6 +12,7 @@ import base64
 import subprocess
 import yaml
 from datetime import datetime
+import time
 
 
 def construct_request_url(
@@ -434,7 +435,7 @@ class StableDraCor:
             logging.debug("Retrieving metrics of corpora failed.")
             corpora_metrics = dict()
 
-        logging.debug(corpora_metrics)
+        #logging.debug(corpora_metrics)
 
         for corpus_metrics_key in corpora_metrics.keys():
             if corpus_metrics_key in manifest["corpora"]:
@@ -447,7 +448,32 @@ class StableDraCor:
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
         with the URL of the local instance"""
-        return api_get(api_base_url=self.__api_base_url, **kwargs)
+        try:
+            result = api_get(api_base_url=self.__api_base_url, **kwargs)
+            return result
+        except AssertionError as err:
+            # This is probably because the eXist-DB is not ready; it returns status code 502
+            logging.debug(f"Caught exception: {str(err)}.")
+            raise ConnectionError("Can not establish connection.")
+
+    def __wait_for_api_connection(self, max_retries: int = 10) -> bool:
+        """Helper function to periodically check connection to DraCor API"""
+        connection = False
+        attempts = max_retries
+
+        while connection is False:
+            try:
+                self.get_api_info()
+                connection = True
+            except ConnectionError:
+                attempts = attempts - 1
+                logging.debug(f"Connection not successful. Will retry in 5 seconds. {str(attempts)} attempts left.")
+                time.sleep(5)
+            if attempts <= 0:
+                logging.debug(f"Can not connect to API after {max_retries}. Giving up.")
+                return False
+
+        return True
 
     def __api_post(self, data, **kwargs):
         """Send POST request to running local instance. Uses the function api_post, but overrides api_base_url
@@ -805,13 +831,16 @@ class StableDraCor:
 
     def run(self,
             compose_file: str = None,
-            url: str = None):
+            url: str = None) -> bool:
         """Run a stack of DraCor Services.
             If no compose file is provided, a compose file will be fetched from the project repository on Github.
 
         Args:
             compose_file (str, optional): Path to a docker compose file that defines the services
             url (str, optional): URL of a compose file
+
+        Returns:
+            bool: True if successful.
         """
         if compose_file is None and url is None:
             self.__run_services_with_docker_compose(fetch_default_compose=True)
@@ -822,6 +851,18 @@ class StableDraCor:
 
         # Try to detect running docker services
         self.__detect_docker_services()
+
+        # this will try to get the API info, try 10 times, wait 5 seconds between the attempts; if
+        # a connection can be established it will return true
+        logging.info("Trying to connect to the local DraCor API. This can take some time ...")
+        api_connection_status = self.__wait_for_api_connection()
+
+        if api_connection_status is False:
+            logging.warning(f"Can not establish API connection. Tested with '{self.__api_base_url}/info'.")
+            return False
+        else:
+            logging.info(f"DraCor API can be reached at '{self.__api_base_url}'.")
+            return True
 
     def __stop_docker_container_by_id(self, container_id:str):
         """Helper Function to stop a single Docker container identified by its ID"""
@@ -890,7 +931,7 @@ class StableDraCor:
         """
         corpora = self.__api_get(method="corpora?include=metrics")
         logging.debug("Retrieved corpus metrics")
-        logging.debug(corpora)
+        # logging.debug(corpora)
 
         metrics = dict()
 
@@ -918,14 +959,15 @@ class StableDraCor:
                 Defaults to "api"
             this_image (str, optional): "New" image that the labels are created for
             base_image (str, optional): Image that the new image is based on (normally a canonical dracor-api image)
-
-        TODO: Manifest must be translated to the labels and must find a way of translate the labels back to manifest
         """
 
         manifest = self.get_manifest()
 
         label_data = {}
 
+        label_data["org.dracor.stable-dracor.version"] = manifest["version"]
+
+        # Data of the System org.dracor.stable-dracor.system.*
         label_data["org.dracor.stable-dracor.system.id"] = manifest["system"]["id"]
 
         if "name" in manifest["system"]:
@@ -942,36 +984,57 @@ class StableDraCor:
             label_data["org.dracor.stable-dracor.corpora"] = ",".join(corpusnames)
 
         for corpus_key in corpusnames:
-            if "source_type" in manifest["corpora"][corpus_key]:
-                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.source-type"
-                label_data[label_key] = manifest["corpora"][corpus_key]["source_type"]
-            if "url" in manifest["corpora"][corpus_key]:
-                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.url"
-                label_data[label_key] = manifest["corpora"][corpus_key]["url"]
-            if "commit" in manifest["corpora"][corpus_key]:
-                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.commit"
-                label_data[label_key] = manifest["corpora"][corpus_key]["commit"]
             if "timestamp" in manifest["corpora"][corpus_key]:
                 label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.timestamp"
                 label_data[label_key] = manifest["corpora"][corpus_key]["timestamp"]
             if "num_of_plays" in manifest["corpora"][corpus_key]:
                 label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays"
                 label_data[label_key] = str(manifest["corpora"][corpus_key]["num_of_plays"])
-            if "exclude" in manifest["corpora"][corpus_key]:
-                if "type" in manifest["corpora"][corpus_key]["exclude"]:
-                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.exclude.type"
-                    label_data[label_key] = manifest["corpora"][corpus_key]["exclude"]["type"]
-                if "ids" in manifest["corpora"][corpus_key]["exclude"]:
-                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.exclude.ids"
-                    label_data[label_key] = ",".join(manifest["corpora"][corpus_key]["exclude"]["ids"])
-            if "include" in manifest["corpora"][corpus_key]:
-                if "type" in manifest["corpora"][corpus_key]["include"]:
-                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.include.type"
-                    label_data[label_key] = manifest["corpora"][corpus_key]["include"]["type"]
-                if "ids" in manifest["corpora"][corpus_key]["include"]:
-                    label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.include.ids"
-                    label_data[label_key] = ",".join(manifest["corpora"][corpus_key]["include"]["ids"])
 
+            # Sources of a corpus: org.dracor.stable-dracor.corpora.{corpusname}.sources.*
+            if "sources" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources"
+                label_data[label_key] = ",".join(list(manifest["corpora"][corpus_key]["sources"].keys()))
+
+                # Data of a source of a corpus: org.dracor.stable-dracor.corpora.{corpusname}.sources.{sourcename}.*
+                for source_key in manifest["corpora"][corpus_key]["sources"].keys():
+                    source = manifest["corpora"][corpus_key]["sources"][source_key]
+                    if "type" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.type"
+                        label_data[label_key] = source["type"]
+                    if "url" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.url"
+                        label_data[label_key] = source["url"]
+                    if "timestamp" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.timestamp"
+                        label_data[label_key] = source["timestamp"]
+                    if "commit" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.commit"
+                        label_data[label_key] = source["commit"]
+                    if "exclude" in source:
+                        if "type" in source["exclude"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"exclude.type"
+                            label_data[label_key] = source["exclude"]["type"]
+                        if "ids" in source["exclude"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"exclude.ids"
+                            label_data[label_key] = ",".join(source["exclude"]["ids"])
+                    if "include" in source:
+                        if "type" in source["include"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"include.type"
+                            label_data[label_key] = source["include"]["type"]
+                        if "ids" in source["include"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"include.ids"
+                            label_data[label_key] = ",".join(source["include"]["ids"])
+                    if "num_of_plays" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                    f"num-of-plays"
+                        label_data[label_key] = source["num_of_plays"]
+
+        # Data on the services: org.dracor.stable-dracor.services.*
         service_names = []
         for service_key in manifest["services"].keys():
             if service_key == service:
