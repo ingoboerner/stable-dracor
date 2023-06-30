@@ -1916,7 +1916,8 @@ class StableDraCor:
             protocol (str, optional): Protocol used in the request url. Defaults to "https"
             check (bool, optional): Additional check if the play has been successfully added. Defaults to True.
 
-        TODO: This kind of addition is not reflected in self.__corpora. Register that.
+        TODO: This kind of addition is not reflected in self.__corpora. Register that. Or: Maybe not, don't know.
+        TODO: this is not using GitHub API but constructing the URL to retrieve the data. This might be not the best option.
         """
 
         assert repository_name is not None, "Providing the name of a repository (repository_name) is required."
@@ -2316,7 +2317,7 @@ class StableDraCor:
                 source_corpusname = existing_corpus_metadata["name"]
                 source_name = source_corpusname
             else:
-                logging.debug(f"There is no corpusname availabele for the source. Use the name of the repository "
+                logging.debug(f"There is no corpusname available for the source. Use the name of the repository "
                               f"'{repository_name}' as name of the source. This probably happend because corpus.xml "
                               f" could not be found and might cause further problems.")
                 source_name = repository_name
@@ -2395,6 +2396,155 @@ class StableDraCor:
             return True
         else:
             logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {new_corpusmetadata['name']}."
+                            f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
+
+            return False
+
+    def add_files_from_repo(self,
+                            corpusname: str = None,
+                            commit: str = None,
+                            repository_name: str = None,
+                            repository_owner: str = "dracor-org",
+                            repository_base_url: str = "github.com",
+                            repository_data_folder: str = "tei",
+                            exclude: list = None,
+                            source_name: str = None,
+                            ) -> bool:
+        """
+        Add files from a repository to an existing corpus.
+
+        It is assumed, that the corpus already exists (use method add_corpus, but explicitly register by setting the
+        flag "register" to True).
+        The metadata of the corpus won't be changed by this method, but it will create a new "source"
+        in __corpora/ the manifest.
+
+        Args:
+            commit (str, optional): Commit-ID representing the state of the repository at a given point in time.
+                If it is not set, the (probably) latest commit will be used.
+            repository_name (str): Name of the repository
+            repository_owner: Username of the user owning the repository. Defaults to "dracor-org"
+            repository_base_url: Base of the repository. If it is the default "github.com", the Github API will be used.
+            repository_data_folder (str, optional): Path to the folder containing the files. Defaults to "tei"
+            exclude (list, optional): File names (without file extension .xml) of plays to exclude from new corpus.
+            source_name (str, optional): Name of the source. Default will be the repostory_name, e.g. gerdracor,
+                but can overwrite
+
+        Returns:
+            bool: True if successful.
+
+        TODO: maybe (!) refactor this and add_corpus_from_repo
+        """
+        assert corpusname is not None, "Setting a local corpus (corpusname) is required!"
+        assert repository_name is not None, "Providing a repository name is required!"
+
+        # need to check if the corpus exists! If not, abort;
+        # TODO: could also create the corpus and register it maybe, but what will be the metadata?
+        if self.__corpus_exists(corpusname) is False:
+            logging.warning(f"Corpus {corpusname} does not exist. Create corpus first using method 'add_corpus'.")
+            return False
+
+        # need to check if the corpus is registered.
+        if corpusname not in self.__corpora:
+            logging.debug(f"Corpus {corpusname} is not registered in self.__corpora. Will add it.")
+            self.__register_corpus(corpusname=corpusname)
+
+        if commit is None:
+            logging.debug("No commit set. Getting latest commit.")
+            commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
+                                                                  repository_owner=repository_owner)
+
+        # Register source in corpus data in self.__corpora
+        logging.debug(f"Registering source of corpus {corpusname}.")
+        if "sources" not in self.__corpora[corpusname]:
+            self.__corpora[corpusname]["sources"] = dict()
+        else:
+            logging.debug(f"Corpus {corpusname} already has {len(self.__corpora[corpusname]['sources'].keys())} sources")
+
+        if source_name is None:
+            logging.debug(f"Will use '{repository_name}' as source and add to the sources in self.__corpora.")
+            source_name = repository_name
+
+        if source_name not in self.__corpora[corpusname]["sources"]:
+
+            source = dict(
+                type="repository",
+                commit=commit,
+                url=f"https://{repository_base_url}/{repository_owner}/{repository_name}",
+                timestamp=datetime.now().isoformat()
+            )
+
+            self.__corpora[corpusname]["sources"][source_name] = source
+        else:
+            logging.warning(f"Source {source_name} of corpus {corpusname} already exists. Changing existing "
+                            f"source is not implemented. User should to check and update manifest manually.")
+
+        # TODO: This part was taken from get_corpus_from_repo so there might be a chance to refactor
+        filenames = self.list_plays_in_repo(commit=commit,
+                                            repository_owner=repository_owner,
+                                            repository_name=repository_name,
+                                            repository_base_url=repository_base_url,
+                                            repository_data_folder=repository_data_folder)
+
+        logging.debug(f"Got {len(filenames)} filenames from repo {repository_owner}/{repository_name}.")
+
+        success = []
+        errors = []
+
+        if exclude is None:
+            logging.debug("No plays are to be excluded.")
+            exclude = []
+        else:
+            logging.debug(f"Should exclude {', '.join(exclude)}.")
+
+        for filename in filenames:
+            if filename in exclude or f"{filename}.xml" in exclude or filename.replace(".xml", "") in exclude:
+                logging.debug(f"File {filename} is excluded.")
+                if filename.endswith(".xml"):
+                    slug = filename[:-4]
+                else:
+                    slug = filename
+
+                # Exclude the file also from the source in self.__corpora
+                self.__exclude_play_from_corpus_source(corpusname=corpusname,
+                                                       source_name=source_name,
+                                                       id_type="slug",
+                                                       id=slug)
+                pass
+            else:
+                # This is what normally happens if a file is not explicitly excluded
+                add_file_status = self.add_play_version_to_corpus(
+                    corpusname=corpusname,
+                    commit=commit,
+                    filename=filename,
+                    repository_name=repository_name,
+                    repository_owner=repository_owner)
+                if add_file_status is True:
+                    success.append(filename)
+                else:
+                    # There was an error with the file, need to exclude them in self.__corpora as well
+                    errors.append(filename)
+                    if filename.endswith(".xml"):
+                        slug = filename[:-4]
+                    else:
+                        slug = filename
+
+                    # Exclude the file also from the source in self.__corpora
+                    self.__exclude_play_from_corpus_source(corpusname=corpusname,
+                                                           source_name=source_name,
+                                                           id_type="slug",
+                                                           id=slug)
+
+        # log a count to self.__corpora source; should use len(success)
+        self.__register_added_play_number_in_corpus_source(corpusname=corpusname,
+                                                           source_name=source_name,
+                                                           num_of_plays=len(success))
+
+        if len(errors) == 0:
+            logging.info(f"Successfully added all {len(success)} files to {corpusname}.")
+
+            return True
+        else:
+            logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {corpusname}."
                             f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
 
             return False
