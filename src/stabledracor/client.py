@@ -1896,7 +1896,8 @@ class StableDraCor:
                                    repository_data_folder: str = "tei",
                                    repository_blob_base_url: str = "raw.githubusercontent.com",
                                    protocol: str = "https",
-                                   check: bool = True) -> bool:
+                                   check: bool = True,
+                                   verbose: bool = True) -> bool:
         """Add a play in a certain version from a git repository defined by a git commit to a corpus.
 
         Args:
@@ -1915,6 +1916,7 @@ class StableDraCor:
                 Defaults to "raw.githubusercontent.com"
             protocol (str, optional): Protocol used in the request url. Defaults to "https"
             check (bool, optional): Additional check if the play has been successfully added. Defaults to True.
+            verbose (bool, optional): Log verbose info messages. Defaults to True.
 
         TODO: This kind of addition is not reflected in self.__corpora. Register that. Or: Maybe not, don't know.
         TODO: this is not using GitHub API but constructing the URL to retrieve the data. This might be not the best option.
@@ -1997,8 +1999,10 @@ class StableDraCor:
             logging.debug(f"Checking if play '{playname}' has been added to corpus '{corpusname}'.")
             added_play = self.__api_get(corpusname=corpusname, playname=playname)
             if type(added_play) == dict:
-                logging.info(f"Play '{playname}' retrieved from '{source_url}' has been successfully added "
-                             f"to corpus '{corpusname}'. Checked and found local play data.")
+                # This is the common message, if verbose is set to false, there will be no logging
+                if verbose is True:
+                    logging.info(f"Play '{playname}' retrieved from '{source_url}' has been successfully added "
+                                 f"to corpus '{corpusname}'. Checked and found local play data.")
                 return True
             else:
                 logging.warning(f"Play from '{source_url}' has not been added.")
@@ -2409,6 +2413,7 @@ class StableDraCor:
                             repository_data_folder: str = "tei",
                             exclude: list = None,
                             source_name: str = None,
+                            verbose: bool = False
                             ) -> bool:
         """
         Add files from a repository to an existing corpus.
@@ -2428,6 +2433,8 @@ class StableDraCor:
             exclude (list, optional): File names (without file extension .xml) of plays to exclude from new corpus.
             source_name (str, optional): Name of the source. Default will be the repostory_name, e.g. gerdracor,
                 but can overwrite
+            verbose (str, optional): Log verbose info messages. Defaults to false. True will log a message for
+                every play.
 
         Returns:
             bool: True if successful.
@@ -2517,7 +2524,8 @@ class StableDraCor:
                     commit=commit,
                     filename=filename,
                     repository_name=repository_name,
-                    repository_owner=repository_owner)
+                    repository_owner=repository_owner,
+                    verbose=verbose)
                 if add_file_status is True:
                     success.append(filename)
                 else:
@@ -2540,11 +2548,13 @@ class StableDraCor:
                                                            num_of_plays=len(success))
 
         if len(errors) == 0:
-            logging.info(f"Successfully added all {len(success)} files to {corpusname}.")
+            logging.info(f"Successfully added all {len(success)} files of repository "
+                         f"'{repository_owner}/{repository_name}' to corpus '{corpusname}'.")
 
             return True
         else:
-            logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {corpusname}."
+            logging.warning(f"Added {len(success)} of {len(filenames)} of repository "
+                            f"{repository_owner}/{repository_name} to corpus '{corpusname}'. "
                             f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
 
             return False
