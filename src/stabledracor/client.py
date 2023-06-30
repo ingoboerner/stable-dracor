@@ -1076,6 +1076,9 @@ class StableDraCor:
             label_data["org.dracor.stable-dracor.corpora"] = ",".join(corpusnames)
 
         for corpus_key in corpusnames:
+            if "corpusname" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.corpusname"
+                label_data[label_key] = manifest["corpora"][corpus_key]["corpusname"]
             if "timestamp" in manifest["corpora"][corpus_key]:
                 label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.timestamp"
                 label_data[label_key] = manifest["corpora"][corpus_key]["timestamp"]
@@ -1091,6 +1094,9 @@ class StableDraCor:
                 # Data of a source of a corpus: org.dracor.stable-dracor.corpora.{corpusname}.sources.{sourcename}.*
                 for source_key in manifest["corpora"][corpus_key]["sources"].keys():
                     source = manifest["corpora"][corpus_key]["sources"][source_key]
+                    if "corpusname" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.corpusname"
+                        label_data[label_key] = source["corpusname"]
                     if "type" in source:
                         label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.type"
                         label_data[label_key] = source["type"]
