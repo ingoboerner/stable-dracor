@@ -2090,28 +2090,6 @@ class StableDraCor:
 
             return filenames
 
-    def __exclude_id_from_corpus_manifest(self,
-                                            id: str = None,
-                                            id_type: str = "slug",
-                                            corpus_manifest: dict = None,
-                                            ):
-        """DEPRECATED: Helper function to remove an element from a corpus manifest
-        # TODO: this method might be a candidate to deprecate
-        """
-        if "exclude" in corpus_manifest:
-            if "ids" in corpus_manifest["exclude"]:
-
-                assert corpus_manifest["exclude"]["type"] == id_type, f"Conflict in excluding plays. ID must be of type" \
-                                                                      f" {corpus_manifest['exclude']['type']}"
-                corpus_manifest["exclude"]["ids"].append(id)
-            else:
-                corpus_manifest["exclude"]["type"] = id_type
-                corpus_manifest["exclude"]["ids"] = [id]
-        else:
-            corpus_manifest["exclude"] = {"type":id_type, "ids": [id]}
-
-        return corpus_manifest
-
     def __exclude_play_from_corpus_source(self,
                                           id: str = None,
                                           corpusname: str = None,
