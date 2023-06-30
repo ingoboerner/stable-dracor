@@ -1395,7 +1395,8 @@ class StableDraCor:
 
     def add_corpus(self,
                    corpus_metadata: dict,
-                   check: bool = True) -> bool:
+                   check: bool = True,
+                   register: bool = False) -> bool:
         """Adds a corpus to the local instance.
 
             Documentation see https://dracor.org/doc/api#/admin/post-corpora
@@ -1412,6 +1413,8 @@ class StableDraCor:
         Args:
             corpus_metadata (dict): Metadata of corpus to add.
             check (bool, optional): Check if corpus exists after adding it. Defaults to True.
+            register (bool, optional): Register a corpus in __corpora (a source for the manifest).
+                Defaults to False.
 
         Returns:
             bool: True if successful.
@@ -1426,6 +1429,11 @@ class StableDraCor:
 
         if response == 200:
             logging.debug(f"Request to add corpus was successful.")
+
+            # Register the corpus in self.__corpora Per default this is not done. This is because most of the
+            # methods that add data register the corpus.
+            if register is True:
+                self.__register_corpus(corpusname=corpus_metadata['name'])
 
             if check is True:
                 logging.debug("Running check for metadata of local corpus.")
