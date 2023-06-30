@@ -1886,6 +1886,54 @@ class StableDraCor:
             logging.debug(errors)
             return False
 
+    def __get_unsafe_characters(self, check: str = None) -> list:
+        """Helper Function to check for problematic characters
+
+        If no text is passed, the method returns a list of all unsafe characters.
+
+        Args:
+            check (str, optional): Text/String to test
+
+        Returns:
+            list: unsafe characters
+
+        """
+        unsafe_characters = [
+            "<",
+            ">",
+            "#",
+            "%",
+            "+",
+            "{",
+            "}",
+            "|",
+            "\\",
+            "^",
+            "~",
+            "[",
+            "]",
+            "´",
+            ";",
+            "/",
+            "?",
+            ":",
+            "@",
+            "=",
+            "&",
+            "$"
+        ]
+
+        if check is None:
+            return unsafe_characters
+
+        else:
+            hits = []
+            for character in unsafe_characters:
+                if character in check:
+                    hits.append(character)
+
+            return hits
+
     def add_play_version_to_corpus(self,
                                    corpusname: str = None,
                                    playname: str = None,
@@ -1974,12 +2022,17 @@ class StableDraCor:
             playname = filename.replace(".xml", "")
             logging.debug(f"Identifier 'playname' of the play is not set. Will use filename '{filename}' as "
                           f" the identifier of the play: ('{playname}').")
-            # TODO: here it is a problem, because in Capek-DraCor + is used in  the filename;
-            #  this produces an invalid url
-            if "+" in playname:
-                # TODO: what are "unsafe" characters in URLs?
-                logging.warning(f"There is an invalid character in the generated identifier 'playname'. Will replace it.")
-                playname = playname.replace("+", "-")
+            # this fixes a problem in Capek-DraCor: '+' is used in  the filename, which results in an invalid url for
+            # the put request
+            unsafe_characters_in_playname = self.__get_unsafe_characters(check=playname)
+            if len(unsafe_characters_in_playname) > 0:
+                logging.warning(f"There are invalid character(s) {', '.join(unsafe_characters_in_playname)} "
+                                f"in the generated identifier 'playname' Will replace it with '-'.")
+
+                for item in unsafe_characters_in_playname:
+                    playname = playname.replace(item, "-")
+
+                logging.debug(f"Will use '{playname}' as identifier 'playname'.")
 
         if import_flag is True:
             add_status = self.__api_put(
