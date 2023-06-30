@@ -1556,7 +1556,7 @@ class StableDraCor:
                                 source_url: str = None):
         """Helper Function to register a(n) (added) corpus in self.__corpora
 
-        Keyword Args:
+        Args:
             corpusname (str): Identifier "corpusname" of the new corpus
             source_name (str, optional): Name of the source. Defaults to the value of source_corpusname.
             source_corpusname: (str, optional): Identifier "corpusname" of the source corpus
@@ -1868,7 +1868,7 @@ class StableDraCor:
                                    repository_blob_base_url: str = "raw.githubusercontent.com",
                                    protocol: str = "https",
                                    check: bool = True) -> bool:
-        f"""Add a play in a certain version from a git repository defined by a git commit to a corpus.
+        """Add a play in a certain version from a git repository defined by a git commit to a corpus.
 
         Args:
             corpusname (str, optional): Identifier 'corpusname' of the local target corpus. 
@@ -1886,6 +1886,8 @@ class StableDraCor:
                 Defaults to "raw.githubusercontent.com"
             protocol (str, optional): Protocol used in the request url. Defaults to "https"
             check (bool, optional): Additional check if the play has been successfully added. Defaults to True.
+
+        TODO: This kind of addition is not reflected in self.__corpora. Register that.
         """
 
         assert repository_name is not None, "Providing the name of a repository (repository_name) is required."
@@ -2098,7 +2100,7 @@ class StableDraCor:
                                           ):
         """Helper function to exclude a play from a source of a corpus in self.__corpora
 
-        Keyword Args:
+        Args:
             id (str): Identifier of the play, normally a slug. But type is set with "id_type".
             corpusname (str): Identifier "corpusname" that has a source of which the play was excluded
             source_name (str): Name of the source of the corpus ins self.__corpora
