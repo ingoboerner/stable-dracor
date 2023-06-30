@@ -1974,6 +1974,12 @@ class StableDraCor:
             playname = filename.replace(".xml", "")
             logging.debug(f"Identifier 'playname' of the play is not set. Will use filename '{filename}' as "
                           f" the identifier of the play: ('{playname}').")
+            # TODO: here it is a problem, because in Capek-DraCor + is used in  the filename;
+            #  this produces an invalid url
+            if "+" in playname:
+                # TODO: what are "unsafe" characters in URLs?
+                logging.warning(f"There is an invalid character in the generated identifier 'playname'. Will replace it.")
+                playname = playname.replace("+", "-")
 
         if import_flag is True:
             add_status = self.__api_put(
@@ -2283,23 +2289,30 @@ class StableDraCor:
                     # TODO: this ignores included sub-elements, e.g. links
 
                 # TODO: Extract other metadata, e.g. licence, licenceUrl, and whatnot
+        else:
+            logging.debug("Should not use metadata in corpus.xml.")
+            existing_corpus_metadata = None
 
-        if corpus_metadata is not None:
-            logging.debug("Prepare corpus metadata for creating corpus.")
 
-            if existing_corpus_metadata:
-                logging.debug("Overwriting corpus.xml extracted data with the provided corpus metadata.")
-                new_corpusmetadata = existing_corpus_metadata
-            else:
-                new_corpusmetadata = {}
+        if corpus_metadata is not None and existing_corpus_metadata is not None:
+            # Need to consolidate new and existing metadata
+            logging.debug("Overwriting corpus.xml extracted data with the provided corpus metadata.")
+
+            new_corpusmetadata = existing_corpus_metadata
 
             for key in corpus_metadata.keys():
                 new_corpusmetadata[key] = corpus_metadata[key]
 
-        elif existing_corpus_metadata is not None:
+        elif corpus_metadata is None and existing_corpus_metadata is not None:
+            # user doesn't want to overwrite metadata extracted from corpus.xml
             new_corpusmetadata = existing_corpus_metadata
 
+        elif corpus_metadata is not None and existing_corpus_metadata is None:
+            # no corpusmetadata exists or it shall not be used, just use the provided metadata
+            new_corpusmetadata = corpus_metadata
+
         else:
+            # corpus metadata is not provided and non-existend (because not corpus.xml) Need to create it.
             logging.debug("Did not provide corpus metadata and not using corpus.xml.")
             new_corpusmetadata = {"name": repository_name,
                                   "title": "No title provided",
@@ -2307,6 +2320,7 @@ class StableDraCor:
                                                  " repository from GitHub. The repository did not contain a"
                                                  " corpus.xml file with corpus metadata."}
 
+        # Corpusname is mandatory. If it is not provided in the metadata, use the mandatory repository name
         if "name" not in new_corpusmetadata:
             logging.debug(f"No identifier corpusname for target corpus supplied. Use name of source repository"
                           f" '{repository_name}'.")
@@ -2317,6 +2331,10 @@ class StableDraCor:
             # register the corpus self.__register_corpus()
             # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
             # self.add_corpus doesn't do the registering; therefore we do it here
+            #Fixes type Problem here
+            if existing_corpus_metadata is None:
+                existing_corpus_metadata = dict()
+
             if "name" in existing_corpus_metadata:
                 source_corpusname = existing_corpus_metadata["name"]
                 source_name = source_corpusname
