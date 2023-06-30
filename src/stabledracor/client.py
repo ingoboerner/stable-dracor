@@ -638,10 +638,102 @@ class StableDraCor:
 
         return json.loads(operation.stdout.decode())
 
-    def __docker_labels_to_manifest(self, labels:dict):
+    def __docker_labels_to_manifest(self, labels: dict):
         """Helper Function to convert labels (org.dracor.stable-dracor) of a docker image to a manifest
-        TODO: implement
         """
+
+        label_list = list(labels.keys())
+
+        manifest = dict(
+            system={},
+            services={},
+            corpora={}
+        )
+
+        if "org.dracor.stable-dracor.version" in labels:
+            manifest["version"] = labels["org.dracor.stable-dracor.version"]
+
+        # System:
+        # all labels starting with: "org.dracor.stable-dracor.system."
+        system_labels = list(filter(lambda label: label.startswith("org.dracor.stable-dracor.system."), label_list))
+        for system_label in system_labels:
+            system_key = system_label.replace("org.dracor.stable-dracor.system.", "")
+            manifest["system"][system_key] = labels[system_label]
+
+        # Services:
+        if "org.dracor.stable-dracor.services" in label_list:
+            service_keys = labels["org.dracor.stable-dracor.services"].split(",")
+            for service_key in service_keys:
+                manifest["services"][service_key] = {}
+                this_service_labels = list(filter(lambda label:
+                                                  label.startswith(f"org.dracor.stable-dracor.services.{service_key}."),
+                                                  label_list))
+                for this_service_label_key in this_service_labels:
+                    this_service_data_key = this_service_label_key.replace(
+                        f"org.dracor.stable-dracor.services.{service_key}.", "")
+                    manifest["services"][service_key][this_service_data_key] = labels[this_service_label_key]
+
+        # Corpora:
+        if "org.dracor.stable-dracor.corpora" in label_list:
+            corpus_keys = labels["org.dracor.stable-dracor.corpora"].split(",")
+            for corpus_key in corpus_keys:
+                corpus = {}
+                if f"org.dracor.stable-dracor.corpora.{corpus_key}.corpusname" in labels:
+                    corpus["corpusname"] = labels[f"org.dracor.stable-dracor.corpora.{corpus_key}.corpusname"]
+                if f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays" in labels:
+                    corpus["num_of_plays"] = labels[f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays"]
+
+                # get the sources of a corpus
+                if f"org.dracor.stable-dracor.corpora.{corpus_key}.sources" in labels:
+                    corpus["sources"] = {}
+                    source_keys = labels[f"org.dracor.stable-dracor.corpora.{corpus_key}.sources"].split(",")
+                    for source_key in source_keys:
+                        source = dict()
+                        source_labels = list(
+                            filter(lambda label: label.startswith(f"org.dracor.stable-dracor.corpora.{corpus_key}."
+                                                                  f"sources.{source_key}."), label_list))
+                        for source_label in source_labels:
+                            source_data_key = source_label.replace(f"org.dracor.stable-dracor.corpora.{corpus_key}."
+                                                                   f"sources.{source_key}.", "")
+                            if "." in source_data_key:
+                                # this creates the part "exclude" or "include"
+                                include_exclude_key = source_data_key.split(".")[0]
+                                include_exclude_field_key = source_data_key.split(".")[1]
+                                if include_exclude_key not in source:
+                                    source[include_exclude_key] = {}
+                                include_exclude_field_label = f"org.dracor.stable-dracor.corpora.{corpus_key}."\
+                                                              f"sources.{source_key}.{include_exclude_key}." \
+                                                              f"{include_exclude_field_key}"
+                                if include_exclude_field_key == "ids":
+                                    include_exclude_field_value = labels[include_exclude_field_label].split(",")
+                                else:
+                                    include_exclude_field_value = labels[include_exclude_field_label]
+
+                                source[include_exclude_key][include_exclude_field_key] = include_exclude_field_value
+
+                            else:
+                                source[source_data_key] = labels[source_label]
+
+                        corpus["sources"][source_key] = source
+
+                manifest["corpora"][corpus_key] = corpus
+
+        return manifest
+
+    def create_manifest(self, image: str = None) -> dict:
+        """
+
+        Args:
+            image: ID of a StableDraCor docker image
+
+        Returns:
+            dict: Manifest describing DraCor system
+
+        """
+        if image is not None:
+            logging.debug(f"Generating manifest from docker labels of image {image}.")
+            image_labels = self.get_labels_from_docker_image(id=image)
+            return self.__docker_labels_to_manifest(image_labels)
 
     def list_docker_containers(self,
                                only_running: bool = False) -> list:
