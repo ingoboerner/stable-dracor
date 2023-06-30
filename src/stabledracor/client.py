@@ -13,6 +13,7 @@ import subprocess
 import yaml
 from datetime import datetime
 import time
+import hashlib
 
 
 def construct_request_url(
@@ -1397,14 +1398,17 @@ class StableDraCor:
                    check: bool = True) -> bool:
         """Adds a corpus to the local instance.
 
-        Documentation see https://dracor.org/doc/api#/admin/post-corpora
+            Documentation see https://dracor.org/doc/api#/admin/post-corpora
 
-        Example of Corpus Metadata:
-            {
-                "name": "rus",
-                "title": "Russian Drama Corpus",
-                "repository": "https://github.com/dracor-org/rusdracor"
-            }
+            Example of Corpus Metadata:
+                {
+                    "name": "rus",
+                    "title": "Russian Drama Corpus",
+                    "repository": "https://github.com/dracor-org/rusdracor"
+                }
+
+            This method does not register a corpus in self.__corpora. This needs to be done in the method calling this.
+
         Args:
             corpus_metadata (dict): Metadata of corpus to add.
             check (bool, optional): Check if corpus exists after adding it. Defaults to True.
@@ -1562,7 +1566,7 @@ class StableDraCor:
             source_corpusname: (str, optional): Identifier "corpusname" of the source corpus
             source_commit (str, optional): Commit representing the state of a corpus added from GitHub
             source_type (str, optional): Type of the source.
-                Typical values "api", "repository", "drive" (hard disk, local folder)
+                Typical values "api", "repository", "files" (from a local folder on hard disk)
             source_url (str, optional): URL of the source
         """
 
@@ -1780,7 +1784,7 @@ class StableDraCor:
             corpusname (str): Identifier 'corpusname' of the corpus to add the plays to
             directory (str): Path to the local directory
             corpus_metadata (dict, optional): Metadata of the corpus to create
-            """
+        """
 
         assert os.path.exists(directory), f"The directory {directory} does not exist."
 
@@ -1807,7 +1811,24 @@ class StableDraCor:
                 new_corpus_metadata = {"name": corpusname, "title": "No title provided."}
                 self.add_corpus(corpus_metadata=new_corpus_metadata)
 
-                assert self.__corpus_exists(corpusname) is True, f"Failed to create corpus {corpusname}."
+            # TODO: check if self.add_corpus registers a corpus
+            # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
+            # self.add_corpus doesn't do the registering; therefore we do it here
+            # TODO: "folder" in "source_name" should be a save name of the directory path or something like that;
+            # maybe a truncated hash of the path?
+            # another (better) option would be to hash the files
+
+            folder_content_string = ",".join(files)
+            #logging.debug(folder_content_string)
+            files_hashed = hashlib.sha1(folder_content_string.encode("UTF-8")).hexdigest()[:8]
+            logging.debug(f"Registering corpus {corpusname}. Truncated hash of filenames in folder {directory} "
+                          f"is: {files_hashed}")
+            self.__register_corpus(corpusname=corpusname,
+                                   source_name=files_hashed,
+                                   source_type="files")
+
+            assert self.__corpus_exists(corpusname) is True, f"Failed to create corpus {corpusname}."
+
         success = []
         errors = []
 
