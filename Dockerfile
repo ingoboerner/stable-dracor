@@ -9,11 +9,16 @@ USER root
 # Install required packages
 RUN apk add --update gcc musl-dev linux-headers python3-dev py3-pip libffi-dev curl git bash
 
-# Pyenv, Virtualenv
-# TODO
-
 # Install Jupyter lab
 RUN pip install jupyter
+
+WORKDIR /home/dracor/
+
+# Install stabledracor-client
+RUN mkdir stabledracor-client
+COPY pyproject.toml /home/dracor/stabledracor-client/pyproject.toml
+COPY src /home/dracor/stabledracor-client/src
+RUN pip install /home/dracor/stabledracor-client
 
 # copy notebooks
 COPY notebooks /home/dracor/notebooks
