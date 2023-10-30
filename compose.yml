@@ -1,0 +1,11 @@
+services:
+  dracor-builder:
+    image: "dracor/dracor-builder"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dracor-builder
+    privileged: true
+    ports:
+      - "8080:8080"
+      - "8888:8888"

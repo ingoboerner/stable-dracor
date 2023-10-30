@@ -2,7 +2,8 @@
 .DS_Store
 .idea/
 .python-version
-test_import_dir
+import
+export
 src/stabledracor/__pycache__/
 .compose.fullstack.empty.yml.swp
 compose.test.yml
