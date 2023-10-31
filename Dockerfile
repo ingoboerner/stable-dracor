@@ -20,6 +20,10 @@ COPY pyproject.toml /home/dracor/stabledracor-client/pyproject.toml
 COPY src /home/dracor/stabledracor-client/src
 RUN pip install /home/dracor/stabledracor-client
 
+# Import, Export-Folder
+RUN mkdir import
+RUN mkdir export
+
 # copy notebooks
 COPY notebooks /home/dracor/notebooks
 
