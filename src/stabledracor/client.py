@@ -911,7 +911,7 @@ class StableDraCor:
         TODO: rework this method
         """
         # The default URL of the compose file is hardcoded. It might be necessary to use different configurations
-        # depending on the operation system.
+        # depending on the operation-system.
         url = "https://raw.githubusercontent.com/dracor-org/stabledracor/master/configurations/compose.fullstack.empty.yml"
 
         r = requests.get(url=url)

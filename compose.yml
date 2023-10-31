@@ -6,6 +6,8 @@ services:
       dockerfile: Dockerfile
     container_name: dracor-builder
     privileged: true
+    environment:
+      - GITHUB_TOKEN
     ports:
       - "8088:8088"
       - "8888:8888"
