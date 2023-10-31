@@ -23,8 +23,11 @@ RUN pip install /home/dracor/stabledracor-client
 # copy notebooks
 COPY notebooks /home/dracor/notebooks
 
+COPY entrypoint.sh /home/dracor/entrypoint.sh
+RUN chmod +x /home/dracor/entrypoint.sh
+
 EXPOSE 8080 8888
 
-ENTRYPOINT ["dockerd-entrypoint.sh"]
+ENTRYPOINT ["./entrypoint.sh"]
 
-CMD jupyter lab --ip=* --allow-root --port=8888 --no-browser --notebook-dir=/home/dracor/notebooks --NotebookApp.token=''
+CMD []
