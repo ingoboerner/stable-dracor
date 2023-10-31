@@ -26,7 +26,7 @@ COPY notebooks /home/dracor/notebooks
 COPY entrypoint.sh /home/dracor/entrypoint.sh
 RUN chmod +x /home/dracor/entrypoint.sh
 
-EXPOSE 8080 8888
+EXPOSE 8088 8888
 
 ENTRYPOINT ["./entrypoint.sh"]
 
