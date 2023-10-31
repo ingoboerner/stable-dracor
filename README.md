@@ -12,7 +12,7 @@ Disclaimer: The client is in an early stage of development. Use with care.
 With Docker/[Docker Desktop](https://www.docker.com/products/docker-desktop) installed:
 
 ```
-from stabledracor.client import StableDraCor
+from stabledracor import StableDraCor
 local_dracor = StableDraCor(name="my_local_dracor", description="My local demo DraCor system")
 
 # create a full stack of dracor services as docker containers. The database will be empty, see http://localhost:8088
@@ -47,7 +47,7 @@ For a more detailed introduction see the how-to notebook.
 ### Full stack of DraCor services
 Run a complete local stack of DraCor services (API, frontend, metrics service, triple store) 
 using Docker and docker-compose only:
-`docker compose -f compose.fullstack.empty.yml up`
+`docker compose -f configurations/compose.fullstack.empty.yml up`
 User `admin`, Password is empty
 
 ### Use Jupyter lab with custom kernel

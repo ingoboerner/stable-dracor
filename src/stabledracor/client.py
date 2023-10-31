@@ -11,6 +11,9 @@ from xml.etree import ElementTree as ET
 import base64
 import subprocess
 import yaml
+from datetime import datetime
+import time
+import hashlib
 
 
 def construct_request_url(
@@ -292,7 +295,8 @@ class StableDraCor:
                  password: str = None,
                  name: str = None,
                  description: str = None,
-                 github_access_token: str = None):
+                 github_access_token: str = None,
+                 manifest: dict = None):
         """
 
         Args:
@@ -303,29 +307,34 @@ class StableDraCor:
              description (str, optional): Description of the local instance
              github_access_token (str, optional): Github Personal Access token used to indentify
                 when sending API requests to the GitHub API. Allows for higher rate limit then anonymous requests.
+            manifest (dict, optional): Manifest describing a system with pre-loaded corpora
         """
 
         # Set a uuid
-        self.id = uuid.uuid4()
-        logging.debug(f"Generated ID: {self.id}.")
+        self.__id = uuid.uuid4()
+        logging.debug(f"Generated ID: {self.__id}.")
+
+        # Create a system from a provided manifest
+        if manifest is not None:
+            logging.warning("Creating a system from a manifest is not implemented yet.")
 
         if name is not None:
             logging.debug(f"Set name to: {name}")
-            self.name = name
+            self.__name = name
         else:
-            self.name = None
+            self.__name = None
 
         if description is not None:
             logging.debug(f"Set description to: {name}")
-            self.description = description
+            self.__description = description
         else:
-            self.description = None
+            self.__description = None
 
         if api_base_url is not None:
             logging.debug(f"Update api_base_url with: {api_base_url}")
-            self.api_base_url = api_base_url
+            self.__api_base_url = api_base_url
         else:
-            self.api_base_url = "http://localhost:8088/api/"
+            self.__api_base_url = "http://localhost:8088/api/"
 
         if username is not None:
             logging.debug(f"Update username with: {api_base_url}")
@@ -341,12 +350,12 @@ class StableDraCor:
             logging.debug("Using default password: ''.")
             self.__password = ""
 
-        logging.info(f"Initialized new StableDraCor instance: '{self.name}' (ID: {self.id}).")
+        logging.info(f"Initialized new StableDraCor instance: '{self.__name}' (ID: {self.__id}).")
 
         if self.__test_api_connection() is True:
-            logging.info(f"Local DraCor API is available at {self.api_base_url}.")
+            logging.info(f"Local DraCor API is available at {self.__api_base_url}.")
         else:
-            logging.warning(f"Local DraCor API is not available at {self.api_base_url}.")
+            logging.warning(f"Local DraCor API is not available at {self.__api_base_url}.")
 
         if github_access_token is not None:
             self.__github_access_token = github_access_token
@@ -363,7 +372,7 @@ class StableDraCor:
 
         # Docker services
         # Initially assume, that there are no services running, but try to locate them in the next step
-        self.services = dict(
+        self.__services = dict(
             api=None,
             frontend=None,
             metrics=None,
@@ -379,10 +388,93 @@ class StableDraCor:
         # docker-compose file
         self.__docker_compose_file = None
 
+        # Metadata on loaded corpora
+        self.__corpora = {}
+
+    def __prepare_system_metadata(self) -> dict:
+        """Helper funtion to prepare metadata on running system"""
+
+        metadata = dict(
+            id=str(self.__id)
+        )
+
+        if self.__name:
+            metadata["name"] = self.__name
+
+        if self.__description:
+            metadata["description"] = self.__description
+
+        now = datetime.now()
+        metadata["timestamp"] = now.isoformat()
+
+        return metadata
+
+    def get_manifest(self):
+        """Get manifest of the running system"""
+
+        manifest = dict(
+            version="v1",
+            system=self.__prepare_system_metadata(),
+            services=self.__services,
+            corpora=self.__corpora
+            )
+
+        # Add additional information to the api service
+        api_info = self.get_api_info()
+        if "version" in api_info:
+            if "api" in self.__services:
+                manifest["services"]["api"]["version"] = api_info["version"]
+
+        if "existdb" in api_info:
+            if "api" in self.__services:
+                manifest["services"]["api"]["existdb"] = api_info["existdb"]
+
+        # add number of plays to corpora
+        try:
+            corpora_metrics = self.__get_corpora_metrics_for_manifest()
+        except:
+            logging.debug("Retrieving metrics of corpora failed.")
+            corpora_metrics = dict()
+
+        #logging.debug(corpora_metrics)
+
+        for corpus_metrics_key in corpora_metrics.keys():
+            if corpus_metrics_key in manifest["corpora"]:
+                corpus_metrics = corpora_metrics[corpus_metrics_key]
+                if "num_of_plays" in corpus_metrics:
+                    manifest["corpora"][corpus_metrics_key]["num_of_plays"] = int(corpus_metrics["num_of_plays"])
+
+        return manifest
+
     def __api_get(self, **kwargs):
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
         with the URL of the local instance"""
-        return api_get(api_base_url=self.api_base_url, **kwargs)
+        try:
+            result = api_get(api_base_url=self.__api_base_url, **kwargs)
+            return result
+        except AssertionError as err:
+            # This is probably because the eXist-DB is not ready; it returns status code 502
+            logging.debug(f"Caught exception: {str(err)}.")
+            raise ConnectionError("Can not establish connection.")
+
+    def __wait_for_api_connection(self, max_retries: int = 10) -> bool:
+        """Helper function to periodically check connection to DraCor API"""
+        connection = False
+        attempts = max_retries
+
+        while connection is False:
+            try:
+                self.get_api_info()
+                connection = True
+            except ConnectionError:
+                attempts = attempts - 1
+                logging.debug(f"Connection not successful. Will retry in 5 seconds. {str(attempts)} attempts left.")
+                time.sleep(5)
+            if attempts <= 0:
+                logging.debug(f"Can not connect to API after {max_retries}. Giving up.")
+                return False
+
+        return True
 
     def __api_post(self, data, **kwargs):
         """Send POST request to running local instance. Uses the function api_post, but overrides api_base_url
@@ -394,7 +486,7 @@ class StableDraCor:
         """
 
         logging.debug(kwargs)
-        return api_post(data, api_base_url=self.api_base_url, **kwargs)
+        return api_post(data, api_base_url=self.__api_base_url, **kwargs)
 
     def __api_put(self, data, **kwargs):
         """Send PUT request to running local instance. Uses the function api_put, but overrides api_base_url
@@ -404,14 +496,14 @@ class StableDraCor:
             data: Payload to include in body
         """
         logging.debug(kwargs)
-        return api_put(data, api_base_url=self.api_base_url, **kwargs)
+        return api_put(data, api_base_url=self.__api_base_url, **kwargs)
 
     def __api_delete(self, **kwargs):
         """Send DELETE request to running local instance. Uses the function api_delete, but overrides api_base_url
         with the URL of the local instance
         """
         logging.debug(kwargs)
-        return api_delete(api_base_url=self.api_base_url, **kwargs)
+        return api_delete(api_base_url=self.__api_base_url, **kwargs)
 
     def __test_api_connection(self):
         """Test if local DraCor API is available."""
@@ -528,6 +620,122 @@ class StableDraCor:
                 images.append(image)
         return images
 
+    def get_labels_from_docker_image(self, id: str) -> dict:
+        """Extract labels from a docker image identified by its image ID
+
+        Args:
+            id (str): ID of the image
+
+        Returns:
+            dict: Docker image labels
+        """
+
+        operation = subprocess.run(["docker",
+                                    "inspect",
+                                    f"{id}",
+                                    "--format",
+                                    '{{ json .Config.Labels }}'
+                                    ], capture_output=True)
+
+        return json.loads(operation.stdout.decode())
+
+    def __docker_labels_to_manifest(self, labels: dict):
+        """Helper Function to convert labels (org.dracor.stable-dracor) of a docker image to a manifest
+        """
+
+        label_list = list(labels.keys())
+
+        manifest = dict(
+            system={},
+            services={},
+            corpora={}
+        )
+
+        if "org.dracor.stable-dracor.version" in labels:
+            manifest["version"] = labels["org.dracor.stable-dracor.version"]
+
+        # System:
+        # all labels starting with: "org.dracor.stable-dracor.system."
+        system_labels = list(filter(lambda label: label.startswith("org.dracor.stable-dracor.system."), label_list))
+        for system_label in system_labels:
+            system_key = system_label.replace("org.dracor.stable-dracor.system.", "")
+            manifest["system"][system_key] = labels[system_label]
+
+        # Services:
+        if "org.dracor.stable-dracor.services" in label_list:
+            service_keys = labels["org.dracor.stable-dracor.services"].split(",")
+            for service_key in service_keys:
+                manifest["services"][service_key] = {}
+                this_service_labels = list(filter(lambda label:
+                                                  label.startswith(f"org.dracor.stable-dracor.services.{service_key}."),
+                                                  label_list))
+                for this_service_label_key in this_service_labels:
+                    this_service_data_key = this_service_label_key.replace(
+                        f"org.dracor.stable-dracor.services.{service_key}.", "")
+                    manifest["services"][service_key][this_service_data_key] = labels[this_service_label_key]
+
+        # Corpora:
+        if "org.dracor.stable-dracor.corpora" in label_list:
+            corpus_keys = labels["org.dracor.stable-dracor.corpora"].split(",")
+            for corpus_key in corpus_keys:
+                corpus = {}
+                if f"org.dracor.stable-dracor.corpora.{corpus_key}.corpusname" in labels:
+                    corpus["corpusname"] = labels[f"org.dracor.stable-dracor.corpora.{corpus_key}.corpusname"]
+                if f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays" in labels:
+                    corpus["num_of_plays"] = labels[f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays"]
+
+                # get the sources of a corpus
+                if f"org.dracor.stable-dracor.corpora.{corpus_key}.sources" in labels:
+                    corpus["sources"] = {}
+                    source_keys = labels[f"org.dracor.stable-dracor.corpora.{corpus_key}.sources"].split(",")
+                    for source_key in source_keys:
+                        source = dict()
+                        source_labels = list(
+                            filter(lambda label: label.startswith(f"org.dracor.stable-dracor.corpora.{corpus_key}."
+                                                                  f"sources.{source_key}."), label_list))
+                        for source_label in source_labels:
+                            source_data_key = source_label.replace(f"org.dracor.stable-dracor.corpora.{corpus_key}."
+                                                                   f"sources.{source_key}.", "")
+                            if "." in source_data_key:
+                                # this creates the part "exclude" or "include"
+                                include_exclude_key = source_data_key.split(".")[0]
+                                include_exclude_field_key = source_data_key.split(".")[1]
+                                if include_exclude_key not in source:
+                                    source[include_exclude_key] = {}
+                                include_exclude_field_label = f"org.dracor.stable-dracor.corpora.{corpus_key}."\
+                                                              f"sources.{source_key}.{include_exclude_key}." \
+                                                              f"{include_exclude_field_key}"
+                                if include_exclude_field_key == "ids":
+                                    include_exclude_field_value = labels[include_exclude_field_label].split(",")
+                                else:
+                                    include_exclude_field_value = labels[include_exclude_field_label]
+
+                                source[include_exclude_key][include_exclude_field_key] = include_exclude_field_value
+
+                            else:
+                                source[source_data_key] = labels[source_label]
+
+                        corpus["sources"][source_key] = source
+
+                manifest["corpora"][corpus_key] = corpus
+
+        return manifest
+
+    def create_manifest(self, image: str = None) -> dict:
+        """
+
+        Args:
+            image: ID of a StableDraCor docker image
+
+        Returns:
+            dict: Manifest describing DraCor system
+
+        """
+        if image is not None:
+            logging.debug(f"Generating manifest from docker labels of image {image}.")
+            image_labels = self.get_labels_from_docker_image(id=image)
+            return self.__docker_labels_to_manifest(image_labels)
+
     def list_docker_containers(self,
                                only_running: bool = False) -> list:
         """
@@ -582,17 +790,17 @@ class StableDraCor:
             image = container[0]["Image"]
             logging.info(f"Found {expected_image} container with ID {container_id}. Image is: {image}")
 
-            if self.services[name] is None:
+            if self.__services[name] is None:
                 self.set_service(name=name, container=container_id, image=image)
             else:
-                if "container" in self.services[name]:
-                    if self.services[name]["container"] == container_id:
+                if "container" in self.__services[name]:
+                    if self.__services[name]["container"] == container_id:
                         logging.debug(f"Container {name} already registered.")
                     else:
-                        logging.warning(f"A different Docker container (ID: {self.services[name]['container']}) is"
+                        logging.warning(f"A different Docker container (ID: {self.__services[name]['container']}) is"
                                         f" already registered as service {name}.")
-                        logging.debug(f"Already registered container: {self.services[name]['container']}.")
-                        logging.debug(f"Container that should be registed now: {container_id}.")
+                        logging.debug(f"Already registered container: {self.__services[name]['container']}.")
+                        logging.debug(f"Container that should be registered now: {container_id}.")
 
         else:
             logging.warning(f"Found {len(container)} running Docker containers derived from a '{expected_image}' "
@@ -626,31 +834,59 @@ class StableDraCor:
                                                 containers=running_containers)
 
         # API/eXist could also be derived from dracor/stable-dracor:{tag} this should be also checked
-        if self.services["api"] is None:
+        if self.__services["api"] is None:
             self.__detect_single_docker_service(name="api",
                                                 expected_image="dracor/stable-dracor",
                                                 containers=running_containers)
 
     def __run_services_with_docker_compose(self,
                                            compose_file: str = None,
-                                           url: str = None):
+                                           url: str = None,
+                                           fetch_default_compose: bool = False):
         """Run services with a docker compose file. Can use either a local compose file or use one that is
         downloaded from a URL.
 
         Args:
             compose_file (str, optional): Path to a compose file.
             url (str, optional): URL to a compose file.
+            fetch_default_compose (bool, optional): Flag to trigger fetching default docker compose file from GitHub.
+                Defaults to False
         """
-        if self.name:
-            stack_name = self.name
+        if self.__name:
+            stack_name = self.__name
         else:
             stack_name = "stable-dracor"
 
-        if compose_file is None and url is None:
-            logging.debug("No compose file provided. Will fetch from X, but this is not implemented yet.")
-        # TODO: implement logic to get a compose file
-        # first check if a path to a compose file is provided, if not
-        # if not alert and fetch it from the source repo
+        if compose_file is None:
+
+            if url is not None:
+                r = requests.get(url=url)
+                if r.status_code == 200:
+                    logging.debug(f"Downloaded file from {url}. Will try stating services based on this file.")
+                    compose_file_raw = r.text
+                else:
+                    logging.warning(f"Can not download file from {url}. Check provided URL or internet connection.")
+
+            elif fetch_default_compose is True:
+                # This happens if nothing is specified!
+                compose_file_raw = self.__get_default_docker_compose()
+
+            else:
+                logging.warning(f"No compose file specified. Can not run services.")
+
+            compose_file_bytes = bytes(compose_file_raw, "utf-8")
+
+            operation = subprocess.run(["docker",
+                                        "compose",
+                                        "-p",
+                                        f"{stack_name}",
+                                        "-f",
+                                        "-",
+                                        "up",
+                                        "-d"], input=compose_file_bytes)
+
+            logging.info(f"Started with downloaded docker compose file.")
+
         elif compose_file is not None:
 
             operation = subprocess.run(["docker",
@@ -665,22 +901,61 @@ class StableDraCor:
             self.__docker_compose_file = compose_file
 
             return True
-        elif url is not None:
-            logging.critical("Not implemented to start from a url. Need to supply compose file.")
-            return False
+
         else:
             logging.warning("Can not start containers. Compose file not specified.")
 
-        # TODO: list available images: https://docs.docker.com/docker-hub/api/latest/#tag/images/operation/GetNamespacesRepositoriesImages
+    def __get_default_docker_compose(self):
+        """Helper function to get a docker compose file to run an empty stack with. This is a fallback
+        to make running a local instance easy.
+        TODO: rework this method
+        """
+        # The default URL of the compose file is hardcoded. It might be necessary to use different configurations
+        # depending on the operation system.
+        url = "https://raw.githubusercontent.com/dracor-org/stabledracor/master/configurations/compose.fullstack.empty.yml"
+
+        r = requests.get(url=url)
+        if r.status_code == 200:
+            compose_file = r.text
+            logging.info(f"Fetched default compose file (configuration) from {url}.")
+            return compose_file
+        else:
+            logging.warning(f"Could not retrieve compose file. Server returned status code {str(r.status_code)}.")
 
     def run(self,
-            compose_file: str = None):
-        """Run a stack of DraCor Services
-        TODO: this needs better documentation"""
-        self.__run_services_with_docker_compose(compose_file=compose_file)
+            compose_file: str = None,
+            url: str = None) -> bool:
+        """Run a stack of DraCor Services.
+            If no compose file is provided, a compose file will be fetched from the project repository on Github.
+
+        Args:
+            compose_file (str, optional): Path to a docker compose file that defines the services
+            url (str, optional): URL of a compose file
+
+        Returns:
+            bool: True if successful.
+        """
+        if compose_file is None and url is None:
+            self.__run_services_with_docker_compose(fetch_default_compose=True)
+        elif url is not None:
+            self.__run_services_with_docker_compose(url=url)
+        elif compose_file is not None:
+            self.__run_services_with_docker_compose(compose_file=compose_file)
 
         # Try to detect running docker services
         self.__detect_docker_services()
+
+        # this will try to get the API info, try 10 times, wait 5 seconds between the attempts; if
+        # a connection can be established it will return true
+        logging.info("Trying to connect to the local DraCor API. This can take some time ...")
+        api_connection_status = self.__wait_for_api_connection()
+
+        if api_connection_status is False:
+            logging.warning(f"Can not establish API connection. Tested with '{self.__api_base_url}/info'.")
+            return False
+        else:
+            logging.info(f"DraCor API can be reached at '{self.__api_base_url}'.")
+            return True
 
     def __stop_docker_container_by_id(self, container_id:str):
         """Helper Function to stop a single Docker container identified by its ID"""
@@ -689,11 +964,11 @@ class StableDraCor:
     def __stop_docker_stack(self):
         """Helper function to stop the whole docker stack
         docker compose -f {compose_file} stop does not work – maybe because of the containers
-        running in detached mode, therefore we stop all containers in self.services..
+        running in detached mode, therefore we stop all containers in self.__services..
         TODO: this should maybe return a status
         """
-        for key in self.services.keys():
-            container = self.services[key]["container"]
+        for key in self.__services.keys():
+            container = self.__services[key]["container"]
             self.__stop_docker_container_by_id(container)
             logging.info(f"Stopped container '{container}'.")
 
@@ -706,7 +981,7 @@ class StableDraCor:
             self.__stop_docker_container_by_id(container)
             logging.debug(f"Stopping container {container}.")
         elif service is not None and container is None:
-            container = self.services[service]["container"]
+            container = self.__services[service]["container"]
             self.__stop_docker_container_by_id(container)
             logging.info(f"Stopping service '{service}' running as container {container}.")
         else:
@@ -733,39 +1008,163 @@ class StableDraCor:
         if name not in ["api", "frontend", "metrics", "triplestore"]:
             logging.warning(f"Registering a non-canonical service: {name}")
 
-        if self.services[name] is None:
-            self.services[name] = dict(container=container)
+        if self.__services[name] is None:
+            self.__services[name] = dict(container=container)
         else:
-            self.services[name]["container"] = container
+            self.__services[name]["container"] = container
 
         if image is not None:
-            self.services[name]["image"] = image
+            self.__services[name]["image"] = image
 
-        return self.services[name]
+        return self.__services[name]
 
-    def __create_docker_image_labels(self):
-        """Helper Function to create Docker Labels to append when committing an image
+    def __get_corpora_metrics_for_manifest(self) -> dict:
+        """Helper Function to extract some data from the corpus metrics to be included in the manifest
+        Currently, only the number of plays "num_of_plays" is included
+        """
+        corpora = self.__api_get(method="corpora?include=metrics")
+        logging.debug("Retrieved corpus metrics")
+        # logging.debug(corpora)
+
+        metrics = dict()
+
+        for item in corpora:
+            corpus = dict()
+            if "metrics" in item:
+                if "plays" in item["metrics"]:
+                    corpus["num_of_plays"] = item["metrics"]["plays"]
+                # only if it has metrics
+                metrics[item["name"]] = corpus
+
+        return metrics
+
+    def __create_docker_image_labels(self,
+                                     service: str = "api",
+                                     this_image: str = None,
+                                     base_image: str = None):
+        """
+        Helper Function to create Docker Labels to append when committing an image
         Creates a string that can be used in the docker commit command with the option -c or --change, e.g.
-         LABEL multi.label1="value1" multi.label2="value2" other="value3"
+        LABEL multi.label1="value1" multi.label2="value2" other="value3"
+
+        Args:
+            service (str, optional): Name of the service for which the image the labels are created for.
+                Defaults to "api"
+            this_image (str, optional): "New" image that the labels are created for
+            base_image (str, optional): Image that the new image is based on (normally a canonical dracor-api image)
         """
 
-        label_data = {
-            "org.dracor.stable-dracor.id": self.id
-        }
+        manifest = self.get_manifest()
 
-        if self.name is not None:
-            label_data["org.dracor.stable-dracor.name"] = self.name
+        label_data = {}
 
-        if self.description is not None:
-            label_data["org.dracor.stable-dracor.description"] = self.description
+        label_data["org.dracor.stable-dracor.version"] = manifest["version"]
 
-        # org.dracor.stable-dracor.service-images:
-        # contains the information about the images used for the DraCor microservices when creating the container
-        service_images = {}
-        for key in self.services.keys():
-            service_images[key] = self.services[key]["image"]
+        # Data of the System org.dracor.stable-dracor.system.*
+        label_data["org.dracor.stable-dracor.system.id"] = manifest["system"]["id"]
 
-        label_data["org.dracor.stable-dracor.service-images"] = json.dumps(service_images, separators=(',', ':'))
+        if "name" in manifest["system"]:
+            label_data["org.dracor.stable-dracor.system.name"] = manifest["system"]["name"]
+
+        if "description" in manifest["system"]:
+            label_data["org.dracor.stable-dracor.system.description"] = manifest["system"]["description"]
+
+        if "timestamp" in manifest["system"]:
+            label_data["org.dracor.stable-dracor.system.timestamp"] = manifest["system"]["timestamp"]
+
+        corpusnames = list(manifest["corpora"].keys())
+        if len(corpusnames) > 0:
+            label_data["org.dracor.stable-dracor.corpora"] = ",".join(corpusnames)
+
+        for corpus_key in corpusnames:
+            if "corpusname" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.corpusname"
+                label_data[label_key] = manifest["corpora"][corpus_key]["corpusname"]
+            if "timestamp" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.timestamp"
+                label_data[label_key] = manifest["corpora"][corpus_key]["timestamp"]
+            if "num_of_plays" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.num-of-plays"
+                label_data[label_key] = str(manifest["corpora"][corpus_key]["num_of_plays"])
+
+            # Sources of a corpus: org.dracor.stable-dracor.corpora.{corpusname}.sources.*
+            if "sources" in manifest["corpora"][corpus_key]:
+                label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources"
+                label_data[label_key] = ",".join(list(manifest["corpora"][corpus_key]["sources"].keys()))
+
+                # Data of a source of a corpus: org.dracor.stable-dracor.corpora.{corpusname}.sources.{sourcename}.*
+                for source_key in manifest["corpora"][corpus_key]["sources"].keys():
+                    source = manifest["corpora"][corpus_key]["sources"][source_key]
+                    if "corpusname" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.corpusname"
+                        label_data[label_key] = source["corpusname"]
+                    if "type" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.type"
+                        label_data[label_key] = source["type"]
+                    if "url" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.url"
+                        label_data[label_key] = source["url"]
+                    if "timestamp" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.timestamp"
+                        label_data[label_key] = source["timestamp"]
+                    if "commit" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}.commit"
+                        label_data[label_key] = source["commit"]
+                    if "exclude" in source:
+                        if "type" in source["exclude"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"exclude.type"
+                            label_data[label_key] = source["exclude"]["type"]
+                        if "ids" in source["exclude"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"exclude.ids"
+                            label_data[label_key] = ",".join(source["exclude"]["ids"])
+                    if "include" in source:
+                        if "type" in source["include"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"include.type"
+                            label_data[label_key] = source["include"]["type"]
+                        if "ids" in source["include"]:
+                            label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                        f"include.ids"
+                            label_data[label_key] = ",".join(source["include"]["ids"])
+                    if "num_of_plays" in source:
+                        label_key = f"org.dracor.stable-dracor.corpora.{corpus_key}.sources.{source_key}." \
+                                    f"num-of-plays"
+                        label_data[label_key] = source["num_of_plays"]
+
+        # Data on the services: org.dracor.stable-dracor.services.*
+        service_names = []
+        for service_key in manifest["services"].keys():
+            if service_key == service:
+                service_names.append(service)
+                if base_image is not None:
+                    label_key = f"org.dracor.stable-dracor.services.{service_key}.base-image"
+                    label_data[label_key] = base_image
+                if this_image is not None:
+                    label_key = f"org.dracor.stable-dracor.services.{service_key}.image"
+                    label_data[label_key] = this_image
+
+            else:
+                if manifest["services"][service_key] is not None:
+                    service_names.append(service_key)
+                    if "image" in manifest["services"][service_key]:
+                        label_key = f"org.dracor.stable-dracor.services.{service_key}.image"
+                        label_data[label_key] = manifest["services"][service_key]["image"]
+
+        # Add additional info if committing API container
+        if service == "api":
+            if "api" in manifest["services"]:
+                if "existdb" in manifest["services"]["api"]:
+                    label_key = f"org.dracor.stable-dracor.services.api.existdb"
+                    label_data[label_key] = manifest["services"]["api"]["existdb"]
+                if "version" in manifest["services"]["api"]:
+                    label_key = f"org.dracor.stable-dracor.services.api.version"
+                    label_data[label_key] = manifest["services"]["api"]["version"]
+
+        if len(service_names) > 0:
+            # somehow json dumps does not work: tested json.dumps(service_names, separators=(',', ':'))
+            label_data["org.dracor.stable-dracor.services"] = ",".join(service_names)
 
         labels = []
 
@@ -788,7 +1187,7 @@ class StableDraCor:
 
         Args:
             service (str, optional): Name of the service to create an image of. Defaults to "api", but could be
-                any of self.services.
+                any of self.__services.
             image_namespace (str, optional): Namespace the docker image will be added to. Defaults to "dracor".
             image_name (str, optional): Name of the image. Defaults to "stable-dracor"
             image_tag (str, optional): Tag of the image. This must be supplied if using dracor/stable-dracor.
@@ -797,7 +1196,7 @@ class StableDraCor:
             update_services (bool, optional): Replace the image in services with the newly created image.
                 Defaults to True.
         """
-        service_info = self.services[service]
+        service_info = self.__services[service]
         logging.debug(f"Creating image of service '{service}'.")
 
         container_id = service_info["container"]
@@ -822,15 +1221,22 @@ class StableDraCor:
 
         # TODO: Must test with Capek thing if it causes problems when committing a running container
 
+        if "image" in self.__services[service]:
+            old_image = self.__services[service]["image"]
+        else:
+            old_image = None
+
         if image_tag is None:
-            image_tag = self.id
+            image_tag = self.__id
 
         new_image = f"{image_namespace}/{image_name}:{image_tag}"
 
         if commit_message is None:
             commit_message = "Create image with StableDraCor client"
 
-        labels = self.__create_docker_image_labels()
+        labels = self.__create_docker_image_labels(service=service,
+                                                   base_image=old_image,
+                                                   this_image=new_image)
 
         commit_operation = subprocess.run([
             "docker",
@@ -850,7 +1256,7 @@ class StableDraCor:
         logging.info(f"Committed container {container_id} as {new_image}. Image identifier {new_image_sha}.")
 
         if update_services is True:
-            self.services[service]["image"] = new_image
+            self.__services[service]["image"] = new_image
             logging.debug(f"Updated services. Image {new_image} is set as service '{service}'.")
 
     def publish_docker_image(self,
@@ -890,18 +1296,18 @@ class StableDraCor:
         """Write the current configuration as a compose file
 
         Args:
-            filename (str, optional): Overwrite the filename. Default will include self.name if available, else
-                self.id.
+            filename (str, optional): Overwrite the filename. Default will include self.__name if available, else
+                self.__id.
 
-        TODO: There is a lot of things hardcoded.. Better integrate self.services and the compose file
+        TODO: There is a lot of things hardcoded.. Better integrate self.__services and the compose file
         """
         compose_file = dict(
             services={}
         )
 
-        for key in self.services.keys():
+        for key in self.__services.keys():
             compose_file["services"][key] = {}
-            compose_file["services"][key]["image"] = self.services[key]["image"]
+            compose_file["services"][key]["image"] = self.__services[key]["image"]
 
             # This is currently hardcoded, maybe this should fetch these parts from the running system?
 
@@ -950,16 +1356,16 @@ class StableDraCor:
                     "3030:3030"
                 ]
 
-        if self.name is not None:
-            title = f"# Stable DraCor System '{self.name}'"
+        if self.__name is not None:
+            title = f"# Stable DraCor System '{self.__name}'"
         else:
             title = "# Stable DraCor System"
 
         if file_name is None:
-            if self.name is not None:
-                file_name = f"compose.{self.name}.yml"
+            if self.__name is not None:
+                file_name = f"compose.{self.__name}.yml"
             else:
-                file_name = f"compose.{self.id}.yml"
+                file_name = f"compose.{self.__id}.yml"
 
         with open(file_name, "w") as f:
             f.write(title)
@@ -967,11 +1373,10 @@ class StableDraCor:
             yaml.dump(compose_file, f)
             logging.info(f"Stored configuration (docker-compose file) as {file_name}.")
 
-    def load_info(self):
+    def get_api_info(self):
         """Should be able to load the info from the /info endpoint and store eXist-DB Version and API version.
-        This information could be appended as docker labels when committing a running container.
-        TODO: implement"""
-        raise Exception("Not implemented.")
+        """
+        return self.__api_get()
 
     def __corpus_exists(self, corpusname: str) -> bool:
         """Helper function to check if a corpus exists.
@@ -990,20 +1395,26 @@ class StableDraCor:
 
     def add_corpus(self,
                    corpus_metadata: dict,
-                   check: bool = True) -> bool:
+                   check: bool = True,
+                   register: bool = False) -> bool:
         """Adds a corpus to the local instance.
 
-        Documentation see https://dracor.org/doc/api#/admin/post-corpora
+            Documentation see https://dracor.org/doc/api#/admin/post-corpora
 
-        Example of Corpus Metadata:
-            {
-                "name": "rus",
-                "title": "Russian Drama Corpus",
-                "repository": "https://github.com/dracor-org/rusdracor"
-            }
+            Example of Corpus Metadata:
+                {
+                    "name": "rus",
+                    "title": "Russian Drama Corpus",
+                    "repository": "https://github.com/dracor-org/rusdracor"
+                }
+
+            This method does not register a corpus in self.__corpora. This needs to be done in the method calling this.
+
         Args:
             corpus_metadata (dict): Metadata of corpus to add.
             check (bool, optional): Check if corpus exists after adding it. Defaults to True.
+            register (bool, optional): Register a corpus in __corpora (a source for the manifest).
+                Defaults to False.
 
         Returns:
             bool: True if successful.
@@ -1018,6 +1429,11 @@ class StableDraCor:
 
         if response == 200:
             logging.debug(f"Request to add corpus was successful.")
+
+            # Register the corpus in self.__corpora Per default this is not done. This is because most of the
+            # methods that add data register the corpus.
+            if register is True:
+                self.__register_corpus(corpusname=corpus_metadata['name'])
 
             if check is True:
                 logging.debug("Running check for metadata of local corpus.")
@@ -1085,16 +1501,24 @@ class StableDraCor:
         logging.debug(f"Retrieved metadata of {str(len(source_plays))} plays from source.")
 
         errors = []
+        success = []
 
         # Plays to exclude
         if exclude is not None:
             exclude = exclude
         else:
             exclude = []
+            # there are plays excluded, need to record that in the self.__corpora
 
         for play in source_plays:
             if play["name"] in exclude:
                 logging.debug(f"Play {play['name']} is excluded.")
+
+                # register this in self.__corpora in the source
+                self.__exclude_play_from_corpus_source(corpusname=target_corpusname,
+                                                       source_name=source_corpusname,
+                                                       id_type="slug",
+                                                       id=play["name"])
             else:
 
                 try:
@@ -1116,14 +1540,98 @@ class StableDraCor:
                             password=self.__password,
                             headers={"Content-Type": "application/xml"})
 
+                    success.append(play['name'])
+
                 except:
                     logging.warning(f"Could not add  {play['name']} to corpus f{target_corpusname}.")
                     errors.append(play["name"])
 
-        logging.info(f"Added contents of corpus {source_corpusname} from {source_api_url}.")
+        logging.info(f"Added contents of corpus {source_corpusname} from {source_api_url}. "
+                     f"{len(success)} plays were added.")
+
+        # log the number of plays successfully added to the source
+        self.__register_added_play_number_in_corpus_source(corpusname=target_corpusname,
+                                                           source_name=source_corpusname,
+                                                           num_of_plays=len(success))
+
         if exclude:
             logging.debug(f"Number of plays excluded: {len(exclude)}.")
+
         logging.debug(f"There were {len(errors)} Errors.")
+
+    def __register_corpus(self,
+                                corpusname: str = None,
+                                source_name: str = None,
+                                source_corpusname: str = None,
+                                source_commit: str = None,
+                                source_type: str = None,
+                                source_url: str = None):
+        """Helper Function to register a(n) (added) corpus in self.__corpora
+
+        Args:
+            corpusname (str): Identifier "corpusname" of the new corpus
+            source_name (str, optional): Name of the source. Defaults to the value of source_corpusname.
+            source_corpusname: (str, optional): Identifier "corpusname" of the source corpus
+            source_commit (str, optional): Commit representing the state of a corpus added from GitHub
+            source_type (str, optional): Type of the source.
+                Typical values "api", "repository", "files" (from a local folder on hard disk)
+            source_url (str, optional): URL of the source
+        """
+
+        if corpusname in self.__corpora:
+            logging.debug(f"Corpus {corpusname} already registered in self.__corpora. "
+                          f"No additional source has been added.")
+            # TODO: decide if source will be added
+        else:
+            logging.debug(f"Registering corpus {corpusname} in self.__corpora.")
+            self.__corpora[corpusname] = dict(
+                corpusname=corpusname,
+                timestamp=datetime.now().isoformat()
+            )
+            if source_name is not None or source_corpusname is not None:
+
+                self.__corpora[corpusname]["sources"] = dict()
+
+                source = dict()
+
+                if source_type is not None:
+                    source["type"] = source_type
+                if source_corpusname is not None:
+                    source["corpusname"] = source_corpusname
+                if source_url is not None:
+                    source["url"] = source_url
+                if source_commit is not None:
+                    source["commit"] = source_commit
+                source["timestamp"] = datetime.now().isoformat()
+
+                # is a source name is provided use this to identify the source,
+                # otherwise use the source corpus name
+                if source_name is not None:
+                    self.__corpora[corpusname]["sources"][source_name] = source
+                else:
+                    self.__corpora[corpusname]["sources"][source_corpusname] = source
+            else:
+                logging.debug(f"No source provided for corpus {corpusname}.")
+
+    def __register_added_play_number_in_corpus_source(self,
+                                                      corpusname:str = None,
+                                                      source_name: str = None,
+                                                      num_of_plays: int = None):
+        """Helper function to add a play count to a source of a corpus in self.__corpora
+
+        Returns:
+
+        """
+        """
+        __register_added_play_number_in_corpus_source(corpusname=target_corpusname,
+                                                   source_name=source_corpusname,
+                                                  num_of_plays=len(success))
+        """
+        assert corpusname in self.__corpora, f"No such corpus '{corpusname}' registered in self.__corpora."
+        assert source_name in self.__corpora[corpusname]["sources"], f"Source {source_name} is not registered with " \
+                                                                     f" corpus {corpusname} in self.__corpora."
+
+        self.__corpora[corpusname]["sources"][source_name]["num_of_plays"] = num_of_plays
 
     def copy_corpus(self,
                     source_api_url: str = None,
@@ -1170,6 +1678,13 @@ class StableDraCor:
         if corpus_add_status is False:
             logging.warning(f"Copying corpus {source_corpusname} failed.")
             return False
+        else:
+            # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
+            self.__register_corpus(corpusname=new_corpus_metadata['name'],
+                                   source_name=source_corpusname,
+                                   source_corpusname=source_corpusname,
+                                   source_type="api",
+                                   source_url=f"{source_api_url}corpora/{source_corpusname}")
 
         if copy_contents:
             self.copy_corpus_contents(
@@ -1177,6 +1692,7 @@ class StableDraCor:
                 source_corpusname=source_corpusname,
                 target_corpusname=new_corpus_metadata["name"],
                 exclude=exclude)
+                # Handling the excludes will be done with the copy_corpus_contents method
 
         if check is True:
             logging.debug(f"Checking if corpus {new_corpus_metadata['name']} is available.")
@@ -1228,7 +1744,9 @@ class StableDraCor:
                                           password=self.__password)
         if delete_status == 200:
             logging.info(f"Removed corpus {corpusname}.")
+            # TODO: this should be reflected in self.__corpora
             return True
+
         if delete_status == 404:
             logging.warning(f"Could not remove corpus {corpusname}. No such corpus.")
             return False
@@ -1253,6 +1771,7 @@ class StableDraCor:
         remove_status = self.__api_delete(corpusname=corpusname, playname=playname)
         if remove_status == 200:
             logging.info(f"Removed play {playname} from corpus {corpusname}.")
+            # TODO: this should be reflected in self.__corpora
             return True
         if remove_status == 404:
             logging.warning(f"No such play {playname} in {corpusname}.")
@@ -1273,7 +1792,7 @@ class StableDraCor:
             corpusname (str): Identifier 'corpusname' of the corpus to add the plays to
             directory (str): Path to the local directory
             corpus_metadata (dict, optional): Metadata of the corpus to create
-            """
+        """
 
         assert os.path.exists(directory), f"The directory {directory} does not exist."
 
@@ -1300,7 +1819,24 @@ class StableDraCor:
                 new_corpus_metadata = {"name": corpusname, "title": "No title provided."}
                 self.add_corpus(corpus_metadata=new_corpus_metadata)
 
-                assert self.__corpus_exists(corpusname) is True, f"Failed to create corpus {corpusname}."
+            # TODO: check if self.add_corpus registers a corpus
+            # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
+            # self.add_corpus doesn't do the registering; therefore we do it here
+            # TODO: "folder" in "source_name" should be a save name of the directory path or something like that;
+            # maybe a truncated hash of the path?
+            # another (better) option would be to hash the files
+
+            folder_content_string = ",".join(files)
+            #logging.debug(folder_content_string)
+            files_hashed = hashlib.sha1(folder_content_string.encode("UTF-8")).hexdigest()[:8]
+            logging.debug(f"Registering corpus {corpusname}. Truncated hash of filenames in folder {directory} "
+                          f"is: {files_hashed}")
+            self.__register_corpus(corpusname=corpusname,
+                                   source_name=files_hashed,
+                                   source_type="files")
+
+            assert self.__corpus_exists(corpusname) is True, f"Failed to create corpus {corpusname}."
+
         success = []
         errors = []
 
@@ -1350,6 +1886,54 @@ class StableDraCor:
             logging.debug(errors)
             return False
 
+    def __get_unsafe_characters(self, check: str = None) -> list:
+        """Helper Function to check for problematic characters
+
+        If no text is passed, the method returns a list of all unsafe characters.
+
+        Args:
+            check (str, optional): Text/String to test
+
+        Returns:
+            list: unsafe characters
+
+        """
+        unsafe_characters = [
+            "<",
+            ">",
+            "#",
+            "%",
+            "+",
+            "{",
+            "}",
+            "|",
+            "\\",
+            "^",
+            "~",
+            "[",
+            "]",
+            "´",
+            ";",
+            "/",
+            "?",
+            ":",
+            "@",
+            "=",
+            "&",
+            "$"
+        ]
+
+        if check is None:
+            return unsafe_characters
+
+        else:
+            hits = []
+            for character in unsafe_characters:
+                if character in check:
+                    hits.append(character)
+
+            return hits
+
     def add_play_version_to_corpus(self,
                                    corpusname: str = None,
                                    playname: str = None,
@@ -1360,8 +1944,9 @@ class StableDraCor:
                                    repository_data_folder: str = "tei",
                                    repository_blob_base_url: str = "raw.githubusercontent.com",
                                    protocol: str = "https",
-                                   check: bool = True) -> bool:
-        f"""Add a play in a certain version from a git repository defined by a git commit to a corpus.
+                                   check: bool = True,
+                                   verbose: bool = True) -> bool:
+        """Add a play in a certain version from a git repository defined by a git commit to a corpus.
 
         Args:
             corpusname (str, optional): Identifier 'corpusname' of the local target corpus. 
@@ -1379,6 +1964,10 @@ class StableDraCor:
                 Defaults to "raw.githubusercontent.com"
             protocol (str, optional): Protocol used in the request url. Defaults to "https"
             check (bool, optional): Additional check if the play has been successfully added. Defaults to True.
+            verbose (bool, optional): Log verbose info messages. Defaults to True.
+
+        TODO: This kind of addition is not reflected in self.__corpora. Register that. Or: Maybe not, don't know.
+        TODO: this is not using GitHub API but constructing the URL to retrieve the data. This might be not the best option.
         """
 
         assert repository_name is not None, "Providing the name of a repository (repository_name) is required."
@@ -1433,6 +2022,17 @@ class StableDraCor:
             playname = filename.replace(".xml", "")
             logging.debug(f"Identifier 'playname' of the play is not set. Will use filename '{filename}' as "
                           f" the identifier of the play: ('{playname}').")
+            # this fixes a problem in Capek-DraCor: '+' is used in  the filename, which results in an invalid url for
+            # the put request
+            unsafe_characters_in_playname = self.__get_unsafe_characters(check=playname)
+            if len(unsafe_characters_in_playname) > 0:
+                logging.warning(f"There are invalid character(s) {', '.join(unsafe_characters_in_playname)} "
+                                f"in the generated identifier 'playname' Will replace it with '-'.")
+
+                for item in unsafe_characters_in_playname:
+                    playname = playname.replace(item, "-")
+
+                logging.debug(f"Will use '{playname}' as identifier 'playname'.")
 
         if import_flag is True:
             add_status = self.__api_put(
@@ -1458,8 +2058,10 @@ class StableDraCor:
             logging.debug(f"Checking if play '{playname}' has been added to corpus '{corpusname}'.")
             added_play = self.__api_get(corpusname=corpusname, playname=playname)
             if type(added_play) == dict:
-                logging.info(f"Play '{playname}' retrieved from '{source_url}' has been successfully added "
-                             f"to corpus '{corpusname}'. Checked and found local play data.")
+                # This is the common message, if verbose is set to false, there will be no logging
+                if verbose is True:
+                    logging.info(f"Play '{playname}' retrieved from '{source_url}' has been successfully added "
+                                 f"to corpus '{corpusname}'. Checked and found local play data.")
                 return True
             else:
                 logging.warning(f"Play from '{source_url}' has not been added.")
@@ -1583,6 +2185,58 @@ class StableDraCor:
 
             return filenames
 
+    def __exclude_play_from_corpus_source(self,
+                                          id: str = None,
+                                          corpusname: str = None,
+                                          source_name: str = None,
+                                          id_type: str = "slug",
+                                          ):
+        """Helper function to exclude a play from a source of a corpus in self.__corpora
+
+        Args:
+            id (str): Identifier of the play, normally a slug. But type is set with "id_type".
+            corpusname (str): Identifier "corpusname" that has a source of which the play was excluded
+            source_name (str): Name of the source of the corpus ins self.__corpora
+            id_type (str): Type of ID. Defaults to "slug", but can be "id" if it is a DraCor ID, e.g. "ger12345"
+                Using anything else than slug is currently not recommended.
+        TODO: this would need to be refactored. There is a really deeply nested if/else structure.
+        """
+
+        assert corpusname in self.__corpora, f"Identifier corpusname {corpusname} is not registered in self.__corpora"
+
+        if "sources" in self.__corpora[corpusname]:
+            if source_name in self.__corpora[corpusname]["sources"]:
+                if "exclude" in self.__corpora[corpusname]["sources"][source_name]:
+                    # check if excluding of same ID type
+                    if "type" in self.__corpora[corpusname]["sources"][source_name]["exclude"]:
+                        # check if excluding the same type
+                        if self.__corpora[corpusname]["sources"][source_name]["exclude"]["type"] != id_type:
+                            # TODO: decide if raise Exception here because this is bad.
+                            logging.warning("Using different ID types to identify plays to exclude. This will "
+                                            "cause problems!")
+                        else:
+                            # all fine, check if IDs already have been excluded
+                            if "ids" in self.__corpora[corpusname]["sources"][source_name]["exclude"]:
+                                self.__corpora[corpusname]["sources"][source_name]["exclude"]["ids"].append(id)
+                            else:
+                                logging.debug("Strangely everything is set, but no IDs are listed to be excluded.")
+                                self.__corpora[corpusname]["sources"][source_name]["exclude"]["ids"] = [id]
+                    else:
+                        logging.warning("There might be something excluded before but the type of ID has not been set.")
+                        self.__corpora[corpusname]["sources"][source_name]["exclude"]["type"] = id_type
+                else:
+                    # need to add exclude dictionary and the substructures because it is the first time a play
+                    # is excluded from this source
+                    self.__corpora[corpusname]["sources"][source_name]["exclude"] = dict()
+                    self.__corpora[corpusname]["sources"][source_name]["exclude"]["type"] = id_type
+                    self.__corpora[corpusname]["sources"][source_name]["exclude"]["ids"] = [id]
+            else:
+                logging.warning(f"Source with name '{source_name}' is not registered with the sources of the corpus "
+                                f"{corpusname}.")
+
+        else:
+            logging.warning("Strangely there are not sources registered in the corpus.")
+
     def add_corpus_from_repo(self,
                              commit: str = None,
                              repository_name: str = None,
@@ -1688,23 +2342,30 @@ class StableDraCor:
                     # TODO: this ignores included sub-elements, e.g. links
 
                 # TODO: Extract other metadata, e.g. licence, licenceUrl, and whatnot
+        else:
+            logging.debug("Should not use metadata in corpus.xml.")
+            existing_corpus_metadata = None
 
-        if corpus_metadata is not None:
-            logging.debug("Prepare corpus metadata for creating corpus.")
 
-            if existing_corpus_metadata:
-                logging.debug("Overwriting corpus.xml extracted data with the provided corpus metadata.")
-                new_corpusmetadata = existing_corpus_metadata
-            else:
-                new_corpusmetadata = {}
+        if corpus_metadata is not None and existing_corpus_metadata is not None:
+            # Need to consolidate new and existing metadata
+            logging.debug("Overwriting corpus.xml extracted data with the provided corpus metadata.")
+
+            new_corpusmetadata = existing_corpus_metadata
 
             for key in corpus_metadata.keys():
                 new_corpusmetadata[key] = corpus_metadata[key]
 
-        elif existing_corpus_metadata is not None:
+        elif corpus_metadata is None and existing_corpus_metadata is not None:
+            # user doesn't want to overwrite metadata extracted from corpus.xml
             new_corpusmetadata = existing_corpus_metadata
 
+        elif corpus_metadata is not None and existing_corpus_metadata is None:
+            # no corpusmetadata exists or it shall not be used, just use the provided metadata
+            new_corpusmetadata = corpus_metadata
+
         else:
+            # corpus metadata is not provided and non-existend (because not corpus.xml) Need to create it.
             logging.debug("Did not provide corpus metadata and not using corpus.xml.")
             new_corpusmetadata = {"name": repository_name,
                                   "title": "No title provided",
@@ -1712,12 +2373,37 @@ class StableDraCor:
                                                  " repository from GitHub. The repository did not contain a"
                                                  " corpus.xml file with corpus metadata."}
 
+        # Corpusname is mandatory. If it is not provided in the metadata, use the mandatory repository name
         if "name" not in new_corpusmetadata:
             logging.debug(f"No identifier corpusname for target corpus supplied. Use name of source repository"
                           f" '{repository_name}'.")
             new_corpusmetadata["name"] = repository_name
 
         create_corpus_status = self.add_corpus(corpus_metadata=new_corpusmetadata, check=False)
+        if create_corpus_status is True:
+            # register the corpus self.__register_corpus()
+            # This registers an added corpus in self.__corpora (only the metadata and the source, not it's contents)
+            # self.add_corpus doesn't do the registering; therefore we do it here
+            #Fixes type Problem here
+            if existing_corpus_metadata is None:
+                existing_corpus_metadata = dict()
+
+            if "name" in existing_corpus_metadata:
+                source_corpusname = existing_corpus_metadata["name"]
+                source_name = source_corpusname
+            else:
+                logging.debug(f"There is no corpusname available for the source. Use the name of the repository "
+                              f"'{repository_name}' as name of the source. This probably happend because corpus.xml "
+                              f" could not be found and might cause further problems.")
+                source_name = repository_name
+                source_corpusname = None
+
+            self.__register_corpus(corpusname=new_corpusmetadata["name"],
+                                   source_corpusname=source_corpusname,
+                                   source_name=source_name,
+                                   source_type="repository",
+                                   source_commit=commit,
+                                   source_url=f"https://{repository_base_url}/{repository_owner}/{repository_name}")
 
         filenames = self.list_plays_in_repo(commit=commit,
                                             repository_owner=repository_owner,
@@ -1732,12 +2418,25 @@ class StableDraCor:
         if exclude is None:
             logging.debug("No plays are to be excluded.")
             exclude = []
+        else:
+            logging.debug(f"Should exclude {', '.join(exclude)}.")
 
         for filename in filenames:
-            if filename in exclude or f"{filename}.xml" in exclude:
+            if filename in exclude or f"{filename}.xml" in exclude or filename.replace(".xml", "") in exclude:
                 logging.debug(f"File {filename} is excluded.")
+                if filename.endswith(".xml"):
+                    slug = filename[:-4]
+                else:
+                    slug = filename
+
+                # Exclude the file also from the source in self.__corpora
+                self.__exclude_play_from_corpus_source(corpusname=new_corpusmetadata["name"],
+                                                       source_name=source_name,
+                                                       id_type="slug",
+                                                       id=slug)
                 pass
             else:
+                # This is what normally happens if a file is not explicitly excluded
                 add_file_status = self.add_play_version_to_corpus(
                     corpusname=new_corpusmetadata["name"],
                     commit=commit,
@@ -1747,14 +2446,188 @@ class StableDraCor:
                 if add_file_status is True:
                     success.append(filename)
                 else:
+                    # There was an error with the file, need to exclude them in self.__corpora as well
                     errors.append(filename)
+                    if filename.endswith(".xml"):
+                        slug = filename[:-4]
+                    else:
+                        slug = filename
+
+                    # Exclude the file also from the source in self.__corpora
+                    self.__exclude_play_from_corpus_source(corpusname=new_corpusmetadata["name"],
+                                                           source_name=source_name,
+                                                           id_type="slug",
+                                                           id=slug)
+
+        # TODO: this might log a count to self.__corpora source; should use len(success)
+        # TODO: should log the number of plays successfully added to the source
+        self.__register_added_play_number_in_corpus_source(corpusname=new_corpusmetadata["name"],
+                                                           source_name=source_name,
+                                                           num_of_plays=len(success))
 
         if len(errors) == 0:
             logging.info(f"Successfully added all {len(success)} files to {new_corpusmetadata['name']}.")
+
             return True
         else:
             logging.warning(f"Added {len(success)} of {len(filenames)} to corpus {new_corpusmetadata['name']}."
                             f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
+
+            return False
+
+    def add_files_from_repo(self,
+                            corpusname: str = None,
+                            commit: str = None,
+                            repository_name: str = None,
+                            repository_owner: str = "dracor-org",
+                            repository_base_url: str = "github.com",
+                            repository_data_folder: str = "tei",
+                            exclude: list = None,
+                            source_name: str = None,
+                            verbose: bool = False
+                            ) -> bool:
+        """
+        Add files from a repository to an existing corpus.
+
+        It is assumed, that the corpus already exists (use method add_corpus, but explicitly register by setting the
+        flag "register" to True).
+        The metadata of the corpus won't be changed by this method, but it will create a new "source"
+        in __corpora/ the manifest.
+
+        Args:
+            commit (str, optional): Commit-ID representing the state of the repository at a given point in time.
+                If it is not set, the (probably) latest commit will be used.
+            repository_name (str): Name of the repository
+            repository_owner: Username of the user owning the repository. Defaults to "dracor-org"
+            repository_base_url: Base of the repository. If it is the default "github.com", the Github API will be used.
+            repository_data_folder (str, optional): Path to the folder containing the files. Defaults to "tei"
+            exclude (list, optional): File names (without file extension .xml) of plays to exclude from new corpus.
+            source_name (str, optional): Name of the source. Default will be the repostory_name, e.g. gerdracor,
+                but can overwrite
+            verbose (str, optional): Log verbose info messages. Defaults to false. True will log a message for
+                every play.
+
+        Returns:
+            bool: True if successful.
+
+        TODO: maybe (!) refactor this and add_corpus_from_repo
+        """
+        assert corpusname is not None, "Setting a local corpus (corpusname) is required!"
+        assert repository_name is not None, "Providing a repository name is required!"
+
+        # need to check if the corpus exists! If not, abort;
+        # TODO: could also create the corpus and register it maybe, but what will be the metadata?
+        if self.__corpus_exists(corpusname) is False:
+            logging.warning(f"Corpus {corpusname} does not exist. Create corpus first using method 'add_corpus'.")
+            return False
+
+        # need to check if the corpus is registered.
+        if corpusname not in self.__corpora:
+            logging.debug(f"Corpus {corpusname} is not registered in self.__corpora. Will add it.")
+            self.__register_corpus(corpusname=corpusname)
+
+        if commit is None:
+            logging.debug("No commit set. Getting latest commit.")
+            commit = self.__get_latest_commit_hash_in_github_repo(repository_name=repository_name,
+                                                                  repository_owner=repository_owner)
+
+        # Register source in corpus data in self.__corpora
+        logging.debug(f"Registering source of corpus {corpusname}.")
+        if "sources" not in self.__corpora[corpusname]:
+            self.__corpora[corpusname]["sources"] = dict()
+        else:
+            logging.debug(f"Corpus {corpusname} already has {len(self.__corpora[corpusname]['sources'].keys())} sources")
+
+        if source_name is None:
+            logging.debug(f"Will use '{repository_name}' as source and add to the sources in self.__corpora.")
+            source_name = repository_name
+
+        if source_name not in self.__corpora[corpusname]["sources"]:
+
+            source = dict(
+                type="repository",
+                commit=commit,
+                url=f"https://{repository_base_url}/{repository_owner}/{repository_name}",
+                timestamp=datetime.now().isoformat()
+            )
+
+            self.__corpora[corpusname]["sources"][source_name] = source
+        else:
+            logging.warning(f"Source {source_name} of corpus {corpusname} already exists. Changing existing "
+                            f"source is not implemented. User should to check and update manifest manually.")
+
+        # TODO: This part was taken from get_corpus_from_repo so there might be a chance to refactor
+        filenames = self.list_plays_in_repo(commit=commit,
+                                            repository_owner=repository_owner,
+                                            repository_name=repository_name,
+                                            repository_base_url=repository_base_url,
+                                            repository_data_folder=repository_data_folder)
+
+        logging.debug(f"Got {len(filenames)} filenames from repo {repository_owner}/{repository_name}.")
+
+        success = []
+        errors = []
+
+        if exclude is None:
+            logging.debug("No plays are to be excluded.")
+            exclude = []
+        else:
+            logging.debug(f"Should exclude {', '.join(exclude)}.")
+
+        for filename in filenames:
+            if filename in exclude or f"{filename}.xml" in exclude or filename.replace(".xml", "") in exclude:
+                logging.debug(f"File {filename} is excluded.")
+                if filename.endswith(".xml"):
+                    slug = filename[:-4]
+                else:
+                    slug = filename
+
+                # Exclude the file also from the source in self.__corpora
+                self.__exclude_play_from_corpus_source(corpusname=corpusname,
+                                                       source_name=source_name,
+                                                       id_type="slug",
+                                                       id=slug)
+                pass
+            else:
+                # This is what normally happens if a file is not explicitly excluded
+                add_file_status = self.add_play_version_to_corpus(
+                    corpusname=corpusname,
+                    commit=commit,
+                    filename=filename,
+                    repository_name=repository_name,
+                    repository_owner=repository_owner,
+                    verbose=verbose)
+                if add_file_status is True:
+                    success.append(filename)
+                else:
+                    # There was an error with the file, need to exclude them in self.__corpora as well
+                    errors.append(filename)
+                    if filename.endswith(".xml"):
+                        slug = filename[:-4]
+                    else:
+                        slug = filename
+
+                    # Exclude the file also from the source in self.__corpora
+                    self.__exclude_play_from_corpus_source(corpusname=corpusname,
+                                                           source_name=source_name,
+                                                           id_type="slug",
+                                                           id=slug)
+
+        # log a count to self.__corpora source; should use len(success)
+        self.__register_added_play_number_in_corpus_source(corpusname=corpusname,
+                                                           source_name=source_name,
+                                                           num_of_plays=len(success))
+
+        if len(errors) == 0:
+            logging.info(f"Successfully added all {len(success)} files of repository "
+                         f"'{repository_owner}/{repository_name}' to corpus '{corpusname}'.")
+
+            return True
+        else:
+            logging.warning(f"Added {len(success)} of {len(filenames)} of repository "
+                            f"{repository_owner}/{repository_name} to corpus '{corpusname}'. "
+                            f"{len(errors)} errors occurred. Files, that were not added: {', '.join(errors)}.")
+
             return False
 
     def list_dracor_github_repos(self):
