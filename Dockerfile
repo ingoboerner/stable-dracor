@@ -1,4 +1,4 @@
-# dracor-builder
+# dracor-sandbox
 # Docker in Docker (dind) with pre-configured jupyter lab and stable-dracor-client to build custom dracor corpora
 FROM docker:dind
 

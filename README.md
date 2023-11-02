@@ -60,7 +60,7 @@ to install the requirements `pip3 install -r requirements.txt`
 ### Docker in Docker (dind)
 Use the Docker compose file `compose.yml` to start a Docker container (`docker compose up`) with Docker daemon and 
 Jupyter lab pre-installed as a sand-boxed environment to build stableDracor instances. 
-To get into the container use `docker exec -it dracor-builder /bin/sh`. 
+To get into the container use `docker exec -it dracor-sandbox /bin/sh`. 
 Jupyter lab is available at http://localhost:8888
 
 ## See also

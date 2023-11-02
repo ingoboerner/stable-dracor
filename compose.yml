@@ -1,10 +1,10 @@
 services:
-  dracor-builder:
-    image: "dracor/dracor-builder"
+  dracor-sandbox:
+    image: "dracor/dracor-sandbox"
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: dracor-builder
+    container_name: dracor-sandbox
     privileged: true
     environment:
       - GITHUB_TOKEN
