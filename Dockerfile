@@ -9,10 +9,13 @@ USER root
 # Install required packages
 RUN apk add --update gcc musl-dev linux-headers python3-dev py3-pip libffi-dev curl git bash
 
+WORKDIR /home/dracor/
+
+RUN python -m venv /home/dracor/venv
+RUN . /home/dracor/venv/bin/activate
+
 # Install Jupyter lab
 RUN pip install jupyter
-
-WORKDIR /home/dracor/
 
 # Install stabledracor-client
 RUN mkdir stabledracor-client
