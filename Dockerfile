@@ -1,6 +1,6 @@
 # dracor-sandbox
 # Docker in Docker (dind) with pre-configured jupyter lab and stable-dracor-client to build custom dracor corpora
-FROM docker:dind
+FROM docker:24.0.6-dind-alpine3.18
 
 MAINTAINER Ingo Börner (ingo.boerner@uni-potsdam.de)
 
@@ -10,9 +10,6 @@ USER root
 RUN apk add --update gcc musl-dev linux-headers python3-dev py3-pip libffi-dev curl git bash
 
 WORKDIR /home/dracor/
-
-RUN python -m venv /home/dracor/venv
-RUN . /home/dracor/venv/bin/activate
 
 # Install Jupyter lab
 RUN pip install jupyter
