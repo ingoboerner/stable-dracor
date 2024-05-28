@@ -17,7 +17,8 @@ import hashlib
 
 
 def construct_request_url(
-    api_base_url: str = "https://dracor.org/api/",
+    api_base_url: str = "https://dracor.org/api/v1/",
+    api_major_version: str = "v1", 
     corpusname: str = None,
     playname: str = None,
     method: str = None):
@@ -25,6 +26,7 @@ def construct_request_url(
 
     Args:
         api_base_url (str, optional): Base URL of the DraCor API.
+        api_major_version (str, optional): Major version of the DraCor API. Defaults to "v1".
         corpusname (str, optional): Identifier of corpus 'corpusname'.
         playname (str, optional): Identifier of play 'playname'.
         method (str, optional): API method, e.g. "tei", "cast", ...
@@ -34,12 +36,22 @@ def construct_request_url(
         pass
     else:
         api_base_url = api_base_url + "/"
+    
+    # v0 had "play" in the endpoint urls, v1 onwards will have "plays"
+    if api_major_version == "v0":
+        plays_placeholder = "play"
+    elif api_major_version == "v1":
+        # this changed to plural in v1
+        plays_placeholder = "plays"
+    else:
+        # default try with v1
+        plays_placeholder = "plays"
 
     if corpusname and playname:
         if method:
-            request_url = f"{api_base_url}corpora/{corpusname}/play/{playname}/{method}"
+            request_url = f"{api_base_url}corpora/{corpusname}/{plays_placeholder}/{playname}/{method}"
         else:
-            request_url = f"{api_base_url}corpora/{corpusname}/play/{playname}"
+            request_url = f"{api_base_url}corpora/{corpusname}/{plays_placeholder}/{playname}"
     elif corpusname and not playname:
         if method:
             request_url = f"{api_base_url}corpora/{corpusname}/{method}"
@@ -54,7 +66,8 @@ def construct_request_url(
 
 
 def api_get(
-        api_base_url: str = "https://dracor.org/api/",
+        api_base_url: str = "https://dracor.org/api/v1/",
+        api_major_version: str = "v1",
         corpusname: str = None,
         playname: str = None,
         method: str = None,
@@ -63,6 +76,7 @@ def api_get(
 
     Args:
         api_base_url (str, optional): Base URL of the DraCor API.
+        api_major_version (str, optional): Major version of the DraCor API. Defaults to "v1"
         corpusname (str, optional): Identifier of corpus 'corpusname'.
         playname (str, optional): Identifier of play 'playname'.
         method (str, optional): API method, e.g. "tei", "cast", ...
@@ -70,6 +84,7 @@ def api_get(
 
     """
     request_url = construct_request_url(api_base_url=api_base_url,
+                                        api_major_version=api_major_version,
                                         corpusname=corpusname,
                                         playname=playname,
                                         method=method)
@@ -94,7 +109,8 @@ def api_get(
 
 def api_post(
         data,
-        api_base_url: str = "https://dracor.org/api/",
+        api_base_url: str = "https://dracor.org/api/v1/",
+        api_major_version: str = "v1",
         corpusname: str = None,
         playname: str = None,
         method: str = None,
@@ -107,6 +123,7 @@ def api_post(
     Args:
         data: Data to include in the body of the POST request.
         api_base_url (str, optional): Base URL of the DraCor API.
+        api_major_version (str, optional): Major Version of the DraCor API. Defaults to "v1"
         corpusname (str, optional): Identifier of corpus 'corpusname'.
         playname (str, optional): Identifier of play 'playname'.
         method (str, optional): API method, e.g. "tei", "cast", ...
@@ -116,6 +133,7 @@ def api_post(
         payload_format (str, optional): Format of the payload. Defaults to "json".
     """
     request_url = construct_request_url(api_base_url=api_base_url,
+                                        api_major_version=api_major_version,
                                         corpusname=corpusname,
                                         playname=playname,
                                         method=method)
@@ -163,7 +181,8 @@ def api_post(
 
 
 def api_put(data,
-        api_base_url: str = "https://dracor.org/api/",
+        api_base_url: str = "https://dracor.org/api/v1/",
+        api_major_version: str = "v1",
         corpusname: str = None,
         playname: str = None,
         method: str = None,
@@ -175,6 +194,7 @@ def api_put(data,
         Args:
             data: Data to include in the body of the POST request.
             api_base_url (str, optional): Base URL of the DraCor API.
+            api_major_version (str, optional): Major version of the DraCor API. Defaults to "v1"
             corpusname (str, optional): Identifier of corpus 'corpusname'.
             playname (str, optional): Identifier of play 'playname'.
             method (str, optional): API method, e.g. "tei", "cast", ...
@@ -182,7 +202,9 @@ def api_put(data,
             password (str, optional): Password. Defaults to empty string
             headers (dict, optional): HTTP headers to send with the request""
         """
+    logging.debug(f"API Major version is: {api_major_version}")
     request_url = construct_request_url(api_base_url=api_base_url,
+                                        api_major_version=api_major_version,
                                         corpusname=corpusname,
                                         playname=playname,
                                         method=method)
@@ -218,7 +240,8 @@ def api_put(data,
 
 
 def api_delete(
-        api_base_url: str = "https://dracor.org/api/",
+        api_base_url: str = "https://dracor.org/api/v1/",
+        api_major_version: str = "v1",
         corpusname: str = None,
         playname: str = None,
         method: str = None,
@@ -229,6 +252,7 @@ def api_delete(
 
     Args:
         api_base_url (str, optional): Base URL of the DraCor API.
+        api_major_version (str, optional): Major version of the DraCor API. Defaults to "v1".
         corpusname (str, optional): Identifier of corpus 'corpusname'.
         playname (str, optional): Identifier of play 'playname'.
         method (str, optional): API method, e.g. "tei", "cast", ...
@@ -237,6 +261,7 @@ def api_delete(
         headers (dict, optional): HTTP headers to send with the request""
     """
     request_url = construct_request_url(api_base_url=api_base_url,
+                                        api_major_version=api_major_version,
                                         corpusname=corpusname,
                                         playname=playname,
                                         method=method)
@@ -285,12 +310,13 @@ class StableDraCor:
 
     # URLs of external DraCor APIs
     __dracor_api_urls = dict(
-        production="https://dracor.org/api/",
-        staging="https://staging.dracor.org/api/",
+        production="https://dracor.org/api/v1/",
+        staging="https://staging.dracor.org/api/v1/",
     )
 
     def __init__(self,
                  api_base_url: str = None,
+                 api_major_version: str = "v1",
                  username: str = None,
                  password: str = None,
                  name: str = None,
@@ -300,7 +326,8 @@ class StableDraCor:
         """
 
         Args:
-             api_base_url (str, optional): URL of the local DraCor API. Default is set to http://localhost:8088/api/
+             api_base_url (str, optional): URL of the local DraCor API. Default is set to http://localhost:8088/api/v1/
+             api_major_version (str, optional): Major version number of the DraCor API. Default is set to "v1".
              username (str, optional): Username of the local instance. Default is set to "admin"
              password (str, optional): Password of the admin user of the local instance. Default is set to ""
              name (str, optional): Name of the local instance
@@ -330,21 +357,33 @@ class StableDraCor:
         else:
             self.__description = None
 
+        if api_major_version is not None:
+            self.__api_major_version = api_major_version
+        else:
+            self.__api_major_version = "v1"
+
         if api_base_url is not None:
             logging.debug(f"Update api_base_url with: {api_base_url}")
             self.__api_base_url = api_base_url
         else:
-            self.__api_base_url = "http://localhost:8088/api/"
+            if self.__api_major_version == "v1":
+                self.__api_base_url = "http://localhost:8088/api/v1/"
+            elif self.__api_major_version == "v0":
+                # this currently works as fallback. Might have to change that here if the default behaviour changes
+                self.__api_base_url = "http://localhost:8088/api/"
+            else:
+                # this fallback is experimental
+                self.__api_base_url = f"http://localhost:8088/{self.__api_major_version}/"
 
         if username is not None:
-            logging.debug(f"Update username with: {api_base_url}")
+            logging.debug(f"Update username with: {username}")
             self.__username = username
         else:
             logging.debug("Using default username 'admin'.")
             self.__username = "admin"
 
         if password is not None:
-            logging.debug(f"Update password with: {api_base_url}")
+            logging.debug(f"Update password with ****")
             self.__password = password
         else:
             logging.debug("Using default password: ''.")
@@ -450,7 +489,7 @@ class StableDraCor:
         """Send GET request to running local instance. Uses the function api_get, but overrides api_base_url
         with the URL of the local instance"""
         try:
-            result = api_get(api_base_url=self.__api_base_url, **kwargs)
+            result = api_get(api_base_url=self.__api_base_url, api_major_version=self.__api_major_version, **kwargs)
             return result
         except AssertionError as err:
             # This is probably because the eXist-DB is not ready; it returns status code 502
@@ -486,7 +525,10 @@ class StableDraCor:
         """
 
         logging.debug(kwargs)
-        return api_post(data, api_base_url=self.__api_base_url, **kwargs)
+        return api_post(data, 
+                        api_base_url=self.__api_base_url, 
+                        api_major_version=self.__api_major_version, 
+                        **kwargs)
 
     def __api_put(self, data, **kwargs):
         """Send PUT request to running local instance. Uses the function api_put, but overrides api_base_url
@@ -496,14 +538,19 @@ class StableDraCor:
             data: Payload to include in body
         """
         logging.debug(kwargs)
-        return api_put(data, api_base_url=self.__api_base_url, **kwargs)
+        return api_put(data, 
+                       api_base_url=self.__api_base_url,
+                       api_major_version=self.__api_major_version, 
+                       **kwargs)
 
     def __api_delete(self, **kwargs):
         """Send DELETE request to running local instance. Uses the function api_delete, but overrides api_base_url
         with the URL of the local instance
         """
         logging.debug(kwargs)
-        return api_delete(api_base_url=self.__api_base_url, **kwargs)
+        return api_delete(api_base_url=self.__api_base_url, 
+                          api_major_version=self.__api_major_version, 
+                          **kwargs)
 
     def __test_api_connection(self):
         """Test if local DraCor API is available."""
@@ -951,7 +998,7 @@ class StableDraCor:
         api_connection_status = self.__wait_for_api_connection()
 
         if api_connection_status is False:
-            logging.warning(f"Can not establish API connection. Tested with '{self.__api_base_url}/info'.")
+            logging.warning(f"Can not establish API connection. Tested with '{self.__api_base_url}info'.")
             return False
         else:
             logging.info(f"DraCor API can be reached at '{self.__api_base_url}'.")
@@ -1472,6 +1519,7 @@ class StableDraCor:
 
     def copy_corpus_contents(self,
                              source_api_url: str = None,
+                             source_api_major_version: str = "v1",
                              source_corpusname: str = None,
                              target_corpusname: str = None,
                              exclude: list = None):
@@ -1480,6 +1528,7 @@ class StableDraCor:
 
         Args:
             source_api_url (str, optional): Url of the API to copy from. Default is https://dracor.org
+            source_api_major_version (str, optional): Major Version of the API running on the source system. Default is "v1"
             source_corpusname (str): Identifier "corpusname" in the source system
             target_corpusname (str, optional): Identifier "corpusname" in the local system.
                 Default will take the name of the source corpus.
@@ -1497,7 +1546,15 @@ class StableDraCor:
             logging.debug(f"Target corpus name not set explicitly, will use source name: {source_corpusname}.")
             target_corpusname = source_corpusname
 
-        source_plays = api_get(api_base_url=source_api_url, corpusname=source_corpusname)["dramas"]
+        if source_api_major_version == "v0":
+            source_plays = api_get(api_base_url=source_api_url, corpusname=source_corpusname)["dramas"]
+        elif source_api_major_version == "v1":
+            source_plays = api_get(api_base_url=source_api_url, corpusname=source_corpusname)["plays"]
+        else:
+            # fallback; expect that it is something v1-ish
+            logging.debug("Source API major version is unknown. Expect that the plays can be retrieved using field 'plays'.")
+            source_plays = api_get(api_base_url=source_api_url, corpusname=source_corpusname)["plays"]
+
         logging.debug(f"Retrieved metadata of {str(len(source_plays))} plays from source.")
 
         errors = []
@@ -1635,6 +1692,7 @@ class StableDraCor:
 
     def copy_corpus(self,
                     source_api_url: str = None,
+                    source_api_major_version: str = "v1",
                     source_corpusname: str = None,
                     metadata: dict = None,
                     copy_contents: bool = True,
@@ -1646,6 +1704,7 @@ class StableDraCor:
 
         Args:
             source_api_url (str, optional): URL of the API to copy the data from. If not set will use DraCor production
+            source_api_major_version (str, optional): Major version of the DraCor API of the source system. Defaults to "v1"
             source_corpusname (str): Identifier "corpusname" of the corpus to copy from source
             metadata (dict, optional): Metadata fields to overwrite. Can be used to change the name of a corpus.
             copy_contents (bool, optional): Add the contents of the source corpus. Defaults to True.
@@ -1663,7 +1722,7 @@ class StableDraCor:
 
         # retrieve the metadata from the source corpus, default is https://dracor.org
         logging.debug("Retrieving corpus metadata.")
-        original_corpus_metadata = api_get(api_base_url=source_api_url, corpusname=source_corpusname)
+        original_corpus_metadata = api_get(api_base_url=source_api_url, api_major_version=source_api_major_version, corpusname=source_corpusname)
 
         new_corpus_metadata = original_corpus_metadata
         if metadata:
@@ -1689,6 +1748,7 @@ class StableDraCor:
         if copy_contents:
             self.copy_corpus_contents(
                 source_api_url=source_api_url,
+                source_api_major_version=source_api_major_version,
                 source_corpusname=source_corpusname,
                 target_corpusname=new_corpus_metadata["name"],
                 exclude=exclude)
@@ -1705,8 +1765,23 @@ class StableDraCor:
 
             if copy_contents is True:
                 logging.debug("Check if the number of plays are as expected:")
-                original_play_count = len(original_corpus_metadata["dramas"])
-                local_play_count = len(local_corpus_data["dramas"])
+                if source_api_major_version == "v0":
+                    original_play_count = len(original_corpus_metadata["dramas"])
+                elif source_api_major_version == "v1":
+                    original_play_count = len(original_corpus_metadata["plays"])
+                else:
+                    logging.debug("Unknown source API major version, expect plays by using key 'plays'.")
+                    original_play_count = len(original_corpus_metadata["plays"])
+                
+                if self.__api_major_version == "v0":
+                    local_play_count = len(local_corpus_data["dramas"])
+                elif self.__api_major_version == "v1":
+                    local_play_count = len(local_corpus_data["plays"])
+                else:
+                    logging.debug("Using 'plays' as fallback for unknown api major version.")
+                    local_play_count = len(local_corpus_data["plays"])
+                        
+                
                 if exclude is None:
                     expected_play_count = original_play_count
                 else:
