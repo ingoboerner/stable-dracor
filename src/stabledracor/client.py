@@ -868,17 +868,31 @@ class StableDraCor:
             logging.debug(f"Detected {len(running_containers)} running Docker containers.")
             # logging.debug(running_containers)
 
+        # Changed this here for the new repositories on DockerHub (used to be dracor/dracor-api, ...)
         expected_service_images = dict(
+            api="dracor/api",
+            frontend="dracor/frontend",
+            metrics="dracor/metrics",
+            triplestore="dracor/fuseki"
+        )
+
+        expected_service_images_legacy = dict(
             api="dracor/dracor-api",
             frontend="dracor/dracor-frontend",
             metrics="dracor/dracor-metrics",
             triplestore="dracor/dracor-fuseki"
         )
 
-        for service_name in expected_service_images.keys():
-            self.__detect_single_docker_service(name=service_name,
-                                                expected_image=expected_service_images[service_name],
-                                                containers=running_containers)
+        if self.__api_major_version == "v0":
+            for service_name in expected_service_images_legacy.keys():
+                self.__detect_single_docker_service(name=service_name,
+                                                    expected_image=expected_service_images[service_name],
+                                                    containers=running_containers)
+        else:
+            for service_name in expected_service_images.keys():
+                self.__detect_single_docker_service(name=service_name,
+                                                    expected_image=expected_service_images[service_name],
+                                                    containers=running_containers)
 
         # API/eXist could also be derived from dracor/stable-dracor:{tag} this should be also checked
         if self.__services["api"] is None:
@@ -959,7 +973,8 @@ class StableDraCor:
         """
         # The default URL of the compose file is hardcoded. It might be necessary to use different configurations
         # depending on the operation-system.
-        url = "https://raw.githubusercontent.com/dracor-org/stabledracor/master/configurations/compose.fullstack.empty.yml"
+        # For testing purposes added a URL to my development-fork, will shift this back to the DraCor GitHub later
+        url = "https://raw.githubusercontent.com/ingoboerner/stable-dracor/api_v1/configurations/compose.fullstack.v1.empty.yml"
 
         r = requests.get(url=url)
         if r.status_code == 200:
