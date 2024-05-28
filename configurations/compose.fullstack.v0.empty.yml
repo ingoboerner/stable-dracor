@@ -1,6 +1,7 @@
 # Full Stack of DraCor Services
 # uses pre-built images published on Dockerhub: https://hub.docker.com/repositories/dracor to setup a local Dracor System
 # should use the dracor-api images with *-local. They don't define the data as an docker volume and thus allow for bundling data
+# This is still a v0 (legacy) API
 
 services:
   
